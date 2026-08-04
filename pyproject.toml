@@ -39,6 +39,10 @@ dependencies = [
     "jieba>=0.42",
     "watchdog>=4.0",
     "pyyaml>=6.0",
+    # pydantic, which the MCP SDK uses to build tool schemas, rejects
+    # `typing.TypedDict` below 3.12. Depended on directly rather than
+    # inherited from pydantic, since resolver.py imports it by name.
+    'typing-extensions>=4.12; python_version < "3.12"',
 ]
 
 [project.scripts]

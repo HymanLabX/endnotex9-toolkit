@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import TypedDict
+import sys
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict
+else:
+    # `ReferenceSelector` annotates MCP tool parameters, and the SDK builds
+    # those schemas with pydantic — which refuses `typing.TypedDict` outright
+    # below 3.12, because it cannot see which keys are required there. The
+    # server would fail to register `get_bibliography`, `get_bibtex` and
+    # `index_pdfs` at import time on every supported Python before 3.12.
+    from typing_extensions import TypedDict
 
 from . import db, parser
 
