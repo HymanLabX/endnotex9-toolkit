@@ -1,0 +1,13 @@
+# Normalise line endings everywhere. `.editorconfig` already asks editors for
+# LF; this makes git agree, in the repository and in the working tree, so a
+# Windows checkout does not differ from the Linux one CI also builds on.
+* text=auto eol=lf
+
+# EndNote's own files are binary. None are committed (see .gitignore), but a
+# stray fixture must never be line-ending mangled.
+*.enl  binary
+*.enlx binary
+*.MYD  binary
+*.MYI  binary
+*.frm  binary
+*.pdf  binary
