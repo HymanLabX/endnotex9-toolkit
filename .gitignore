@@ -1,0 +1,54 @@
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build, test, lint, and coverage output
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.log
+
+# Local application indexes and temporary files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tmp
+
+# Private EndNote libraries, exports, and attachments
+*.enl
+*.enlx
+*.MYD
+*.MYI
+*.frm
+*.pdf
+*.Data/
+/*.xml
+/class/
+
+# Local experiments and generated classification output
+/_classify/
+/_writeback-test/
+*.BACKUP-*/
+
+# Machine-specific MCP/agent configuration and project notes
+/.mcp.json
+/.codex/
+/CLAUDE.md
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

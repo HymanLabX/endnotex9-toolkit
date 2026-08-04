@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "endnotex9": {
+      "command": "endnotex9-mcp",
+      "args": ["serve"]
+    }
+  }
+}

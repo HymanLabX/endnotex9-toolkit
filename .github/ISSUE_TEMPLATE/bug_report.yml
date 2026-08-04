@@ -1,0 +1,60 @@
+name: Bug report
+description: Report reproducible incorrect behavior without sharing private library data
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not upload a real EndNote library, XML export, PDF, config file, or unredacted path.
+  - type: input
+    id: version
+    attributes:
+      label: Package version or commit
+      placeholder: 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: endnote
+    attributes:
+      label: EndNote version
+      options:
+        - X9
+        - Newer than X9 (crosscheck completed)
+        - Newer than X9 (crosscheck not completed)
+        - XML-only setup
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Python version
+      placeholder: Windows 11, Python 3.12
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Prefer a synthetic fixture or minimal metadata example.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and redacted traceback
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed real library data, PDFs, secrets, email addresses, and personal filesystem paths.
+          required: true
