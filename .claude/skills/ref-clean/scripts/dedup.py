@@ -28,9 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
-import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -43,9 +41,7 @@ from endnotex9_mcp import commit
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
 
-def norm_title(t):
-    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z0-9]", "", t.lower())
+norm_title = common.norm_title
 
 
 def detect_groups(rows):

@@ -16,14 +16,21 @@ Two-source waterfall per field, same as the proven session run:
   notes               -> cleared only once author or journal was actually
                         recovered from it.
 
-Always dry-run first (writes ref_clean_metadata_preview.json, nothing to
-EndNote). Only with --commit does it call commit.update_reference_fields
-with dry_run=False, which backs up the library and refuses to run while
-EndNote has it open.
+Always dry-run first: the plan lands in out/metadata_updates.json and the
+diff in out/metadata_dry_run.json, with nothing written to EndNote. Only
+with --commit does it call commit.update_reference_fields with
+dry_run=False, which backs up the library and refuses to run while EndNote
+has it open.
+
+CrossRef answers are cached in out/crossref_cache.json, so `--commit`
+writes exactly what the preceding dry run displayed rather than sweeping
+the API a second time and acting on whatever comes back. Use --refresh to
+discard the cache and re-query.
 
 Usage:
     python metadata.py                 # census + build + dry-run, report only
     python metadata.py --commit        # do the above, then actually write
+    python metadata.py --refresh       # ignore the CrossRef cache
     python metadata.py --limit 50      # cap how many records are examined (debugging)
 """
 
@@ -195,6 +202,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", action="store_true")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument(
+        "--refresh", action="store_true", help="ignore out/crossref_cache.json and re-query"
+    )
     args = ap.parse_args()
 
     rdb, library_path, _pdf_dir = common.load_library()
@@ -231,7 +241,20 @@ def main():
         if done % 50 == 0 or done == total:
             print(f"  crossref: {done}/{total}")
 
-    crossref_data = crossref.fetch_many(needs_crossref, on_progress=progress) if needs_crossref else {}
+    OUT_DIR.mkdir(exist_ok=True)
+    crossref_data = (
+        crossref.fetch_many(
+            needs_crossref,
+            on_progress=progress,
+            cache_path=OUT_DIR / "crossref_cache.json",
+            refresh=args.refresh,
+        )
+        if needs_crossref
+        else {}
+    )
+    errors = sum(1 for v in crossref_data.values() if v == "ERROR")
+    if errors:
+        print(f"  {errors} DOI lookup(s) failed and were skipped (not cached; rerun to retry)")
 
     updates, stats, review = build_updates(rows, crossref_data)
 

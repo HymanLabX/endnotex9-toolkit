@@ -70,8 +70,29 @@ def is_abbrev_author(name):
     return bool(tokens) and all(len(t) == 1 for t in tokens)
 
 
+def is_mostly_latin(s):
+    """Whether `s` is written in the Latin alphabet.
+
+    Guards the heuristics below, all of which reason about word counts and
+    word lengths and mean nothing outside a space-separated alphabetic
+    script.
+    """
+    letters = [c for c in s if c.isalpha()]
+    if not letters:
+        return False
+    return sum(1 for c in letters if c.isascii()) / len(letters) >= 0.8
+
+
 def looks_abbrev_journal(journal):
-    if not journal:
+    """Whether `journal` looks like an abbreviated title ("Acta Mater").
+
+    Latin-script only, deliberately. A Chinese journal name is a handful of
+    characters with no spaces, which every clause below reads as "few, short
+    words" — `材料科学` scored as an abbreviation, and the caller would then
+    happily overwrite it with CrossRef's longer English title. The name is
+    not abbreviated, it is just not English.
+    """
+    if not journal or not is_mostly_latin(journal):
         return False
     tokens = journal.replace(".", "").split()
     if not tokens:
@@ -81,8 +102,19 @@ def looks_abbrev_journal(journal):
 
 
 def norm_name(s):
-    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z]", "", s.lower())
+    """Fold a personal name to a comparable key.
+
+    Latin names fold to ASCII letters, so accents and punctuation stop
+    mattering. A name with no Latin letters at all — a CJK name, which this
+    project's libraries are full of — would fold to the empty string, and an
+    empty key is a substring of everything, so `same_surname` would call it
+    a match against any name on earth. Those keep their own characters
+    instead, which compare equal to each other and unequal to Latin ones.
+    """
+    folded = re.sub(r"[^a-z]", "", unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower())
+    if folded:
+        return folded
+    return re.sub(r"[\s\W_]", "", unicodedata.normalize("NFKC", s).lower())
 
 
 def surname_of(abbrev_author):
@@ -94,9 +126,14 @@ def same_surname(local_author, crossref_family):
 
     Substring either way, because the two sources disagree about compound
     and hyphenated surnames often enough to matter ("Dall'Olio" vs
-    "DallOlio", "Zhang" vs "Zhang-Li").
+    "DallOlio", "Zhang" vs "Zhang-Li"). An empty key on either side is never
+    a match — see `norm_name`; treating it as one made every CJK-named
+    author match every CrossRef author, which is exactly the case where
+    guessing is least defensible.
     """
     local, remote = surname_of(local_author), norm_name(crossref_family)
+    if not local or not remote:
+        return False
     return local == remote or local in remote or remote in local
 
 
@@ -119,6 +156,22 @@ def author_list_is_truncated(authors, crossref_names):
     return all(
         same_surname(author, crossref_names[i][0]) for i, author in enumerate(authors)
     )
+
+
+def norm_title(t):
+    """Fold a title to a comparison key, keeping non-Latin scripts intact.
+
+    Same trap as `norm_name`: folding to ASCII turns "退火对形状记忆合金 A"
+    and "时效对形状记忆合金 A" into the same key, so two unrelated Chinese
+    papers by one author in one year would look like duplicates.
+    """
+    folded = re.sub(
+        r"[^a-z0-9]", "", unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii").lower()
+    )
+    stripped = re.sub(r"[\s\W_]", "", unicodedata.normalize("NFKC", t).lower())
+    # Prefer the ASCII fold only when it kept essentially the whole title;
+    # otherwise most of the text was non-Latin and the fold threw it away.
+    return folded if len(folded) >= 0.8 * len(stripped) else stripped
 
 
 NOTES_CITATION_TAIL_RE = re.compile(r"doi:\s*\S+\.?\s*$", re.I)

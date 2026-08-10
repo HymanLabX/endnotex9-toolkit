@@ -1,17 +1,31 @@
-"""Fetch CrossRef metadata by DOI. Read-only network calls, no library writes."""
+"""Fetch CrossRef metadata by DOI. Read-only network calls, no library writes.
+
+Results are cached to disk between runs (see `fetch_many`). That is not
+only for speed: without it, `metadata.py`'s dry run and its `--commit` are
+two independent sweeps of the API, so what gets written is not necessarily
+what was reviewed and approved.
+"""
 
 from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
-HEADERS = {"User-Agent": "ref-clean/1.0 (mailto:research-assistant@example.com)"}
+# CrossRef asks callers to identify themselves and puts those who do into a
+# faster, more reliable pool. Set CROSSREF_MAILTO to a real address to opt
+# in; a made-up one is worse than none, so the default sends no address.
+_MAILTO = os.environ.get("CROSSREF_MAILTO", "").strip()
+HEADERS = {
+    "User-Agent": f"ref-clean/1.0 (mailto:{_MAILTO})" if _MAILTO else "ref-clean/1.0"
+}
 
 
 def fetch_one(doi, timeout=20, retries=3):
@@ -32,19 +46,56 @@ def fetch_one(doi, timeout=20, retries=3):
     return doi, "ERROR"
 
 
-def fetch_many(dois, max_workers=8, on_progress=None):
-    """dict[doi] -> CrossRef message (dict), None (not found), or 'ERROR'."""
-    results = {}
+def load_cache(cache_path):
+    if not cache_path or not Path(cache_path).is_file():
+        return {}
+    try:
+        cached = json.loads(Path(cache_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}  # a damaged cache is a reason to re-fetch, not to fail
+    return cached if isinstance(cached, dict) else {}
+
+
+def fetch_many(dois, max_workers=8, on_progress=None, cache_path=None, refresh=False):
+    """dict[doi] -> CrossRef message (dict), None (not found), or 'ERROR'.
+
+    With `cache_path`, answers already on disk are reused and only the
+    missing DOIs are fetched; the cache is rewritten afterwards. This is
+    what lets a `--commit` run write exactly what its dry run displayed
+    instead of asking the API again and acting on whatever comes back the
+    second time. `refresh=True` ignores what is cached and asks again.
+
+    `'ERROR'` results are never cached: a network failure is not an answer,
+    and caching it would make one bad afternoon permanent.
+    """
     unique = sorted(set(dois))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(fetch_one, doi): doi for doi in unique}
-        done = 0
-        for fut in as_completed(futures):
-            doi, message = fut.result()
-            results[doi] = message
-            done += 1
-            if on_progress:
-                on_progress(done, len(unique))
+    cached = {} if refresh else load_cache(cache_path)
+    results = {doi: cached[doi] for doi in unique if doi in cached}
+    todo = [doi for doi in unique if doi not in results]
+
+    if on_progress and results:
+        on_progress(len(results), len(unique))
+
+    if todo:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(fetch_one, doi): doi for doi in todo}
+            done = len(results)
+            for fut in as_completed(futures):
+                doi, message = fut.result()
+                results[doi] = message
+                done += 1
+                if on_progress:
+                    on_progress(done, len(unique))
+
+    if cache_path:
+        keep = {**cached, **{d: m for d, m in results.items() if m != "ERROR"}}
+        try:
+            Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(cache_path).write_text(
+                json.dumps(keep, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError:
+            pass  # the cache is an optimisation; losing it must not fail a run
     return results
 
 
