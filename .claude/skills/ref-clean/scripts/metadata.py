@@ -3,6 +3,13 @@
 Two-source waterfall per field, same as the proven session run:
   author / journal  -> same-record source first (Notes / alternate_title),
                         CrossRef by DOI second, each gated by its own check.
+                        Authors are reconsidered for two independent
+                        reasons: initials CrossRef can spell out, and a
+                        list that is merely *short* -- an `et al.` import
+                        that kept the first author or three. The second is
+                        only acted on when the stored names are a strict
+                        positional surname prefix of CrossRef's, and never
+                        shortens a list CrossRef knows less about.
   volume/issue/pages/article_number/number_of_volumes/abstract/title
                      -> local blank -> CrossRef fill only (no local source).
   keywords           -> strip the "X-MOL" import-noise token.
@@ -43,6 +50,7 @@ def build_updates(rows, crossref_data):
         "keywords_xmol": 0,
         "author_from_notes": 0,
         "author_from_crossref": 0,
+        "author_completed_from_crossref": 0,
         "author_skipped_count_mismatch": 0,
         "author_skipped_surname_mismatch": 0,
         "journal_from_alt_title": 0,
@@ -84,18 +92,29 @@ def build_updates(rows, crossref_data):
                 note_fixed_something = True
                 has_abbrev = False
 
-        if has_abbrev and message:
-            cr_names = crossref.authors_of(message)
-            if len(cr_names) == len(authors):
+        # Two separate things can be wrong with a stored author list, and
+        # gating on only the first (as this used to) misses the other
+        # entirely: the names can be initials that CrossRef can spell out,
+        # and the list can be *short* -- the `et al.` import problem, where
+        # a record keeps the first author or three and drops the rest. A
+        # record whose two authors are already spelled out in full is
+        # invisible to an abbreviation check, however many are missing.
+        cr_names = crossref.authors_of(message) if message else []
+        truncated = cr_names and common.author_list_is_truncated(authors, cr_names)
+        if cr_names and "author" not in fields and (has_abbrev or truncated):
+            full = [f"{fam}, {giv}" if giv else fam for fam, giv in cr_names]
+            if truncated:
+                # Same people in the same order, just fewer of them.
+                fields["author"] = full
+                stats["author_completed_from_crossref"] += 1
+            elif len(cr_names) == len(authors):
                 mismatches = [
                     i
                     for i, (fam, _giv) in enumerate(cr_names)
-                    if common.norm_name(fam) != common.surname_of(authors[i])
-                    and common.surname_of(authors[i]) not in common.norm_name(fam)
-                    and common.norm_name(fam) not in common.surname_of(authors[i])
+                    if not common.same_surname(authors[i], fam)
                 ]
                 if not mismatches:
-                    fields["author"] = [f"{fam}, {giv}" if giv else fam for fam, giv in cr_names]
+                    fields["author"] = full
                     stats["author_from_crossref"] += 1
                 else:
                     stats["author_skipped_surname_mismatch"] += 1
@@ -103,9 +122,17 @@ def build_updates(rows, crossref_data):
                         {"rec": rec, "doi": doi, "current": authors, "crossref": cr_names}
                     )
             else:
+                # Counts differ and the overlap does not line up — either
+                # the record has authors CrossRef lacks, or they disagree
+                # about who wrote this. Not something to guess at.
                 stats["author_skipped_count_mismatch"] += 1
                 review["author_count_mismatch"].append(
-                    {"rec": rec, "doi": doi, "current_count": len(authors), "crossref_count": len(cr_names)}
+                    {
+                        "rec": rec,
+                        "doi": doi,
+                        "current": authors,
+                        "crossref": [f"{f}, {g}" for f, g in cr_names],
+                    }
                 )
 
         journal_abbrev_or_blank = not journal or common.looks_abbrev_journal(journal)
@@ -184,7 +211,12 @@ def main():
         journal = common.text(row, "secondary_title")
         note = common.text(row, "notes")
         note_covers_author = any(common.is_abbrev_author(a) for a in authors) and common.notes_looks_like_pubmed_dump(note)
-        needs_author = any(common.is_abbrev_author(a) for a in authors) and not note_covers_author
+        # Whether the list is truncated cannot be known without asking
+        # CrossRef how many authors there are, so any record with a DOI is
+        # worth a lookup on author grounds alone. Gating this on
+        # `is_abbrev_author` (as it used to) hid every record whose too-few
+        # authors happened to be spelled out in full.
+        needs_author = bool(authors) and not note_covers_author
         needs_journal = not journal or common.looks_abbrev_journal(journal)
         needs_fill = any(
             not common.text(row, c) for c in ("volume", "number", "pages", "section", "abstract", "title")

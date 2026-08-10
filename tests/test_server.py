@@ -94,6 +94,8 @@ def _make_rdb_library(tmp_path: Path, name: str, rows: list[bytes]) -> tuple[Pat
     struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
     struct.pack_into(">Q", myi, writeback._MYI_SPLIT, len(rows))
     struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
+    # An empty free chain is the sentinel, not zero — see writeback.py.
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, writeback._FREE_LIST_END)
     (rdb / "refs.MYI").write_bytes(bytes(myi))
     (rdb / "refs.frm").write_bytes(b"fake frm")
 

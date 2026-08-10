@@ -28,6 +28,45 @@ def _whole_block(payload: bytes, extra_pad: int = 0) -> bytes:
     return b"\x03" + struct.pack(">H", len(payload)) + bytes([pad]) + payload + b"\x00" * pad
 
 
+def _myi(split: int, data_len: int) -> bytes:
+    """A `.MYI` state header realistic enough for the writer to maintain.
+
+    `dellink` matters as much as the counters: a real library with no
+    deleted blocks holds the end-of-chain sentinel there, never zero — zero
+    would name the file's own first block as reusable free space. Leaving it
+    zero here would have made these fixtures the one shape the writer is
+    never allowed to produce.
+    """
+    myi = bytearray(256)
+    myi[0:4] = myisam.MYI_MAGIC
+    struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
+    struct.pack_into(">Q", myi, writeback._MYI_SPLIT, split)
+    struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, data_len)
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, writeback._FREE_LIST_END)
+    return bytes(myi)
+
+
+def _myi_state(rdb: Path) -> dict:
+    """The free-space ledger the writer is responsible for keeping true."""
+    myi = (rdb / "refs.MYI").read_bytes()
+    return {
+        "del": struct.unpack_from(">Q", myi, writeback._MYI_DEL)[0],
+        "dellink": struct.unpack_from(">Q", myi, writeback._MYI_DELLINK)[0],
+        "empty": struct.unpack_from(">Q", myi, writeback._MYI_EMPTY)[0],
+    }
+
+
+def _blocks(myd: Path) -> list:
+    data = myd.read_bytes()
+    out, pos = [], 0
+    while pos < len(data):
+        block = myisam._read_block(data, pos)
+        out.append(block)
+        pos += max(block.span, 1)
+    assert pos == len(data), "block walk must land exactly on EOF"
+    return out
+
+
 @pytest.fixture
 def library(tmp_path: Path) -> tuple[Path, Path]:
     """An rdb folder plus the `.enl` mirror, holding three records."""
@@ -47,14 +86,7 @@ def library(tmp_path: Path) -> tuple[Path, Path]:
     ]
     myd = b"".join(_whole_block(r) for r in rows)
     (rdb / "refs.MYD").write_bytes(myd)
-
-    # A .MYI just large enough to carry the state header fields we update.
-    myi = bytearray(256)
-    myi[0:4] = myisam.MYI_MAGIC
-    struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
-    struct.pack_into(">Q", myi, writeback._MYI_SPLIT, len(rows))
-    struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
-    (rdb / "refs.MYI").write_bytes(bytes(myi))
+    (rdb / "refs.MYI").write_bytes(_myi(len(rows), len(myd)))
     (rdb / "refs.frm").write_bytes(b"fake frm")
 
     enl = tmp_path / "Lib.enl"
@@ -202,13 +234,7 @@ def library_with_a_bloated_record(tmp_path: Path) -> tuple[Path, Path]:
     ]
     myd = b"".join(_whole_block(r) for r in rows)
     (rdb / "refs.MYD").write_bytes(myd)
-
-    myi = bytearray(256)
-    myi[0:4] = myisam.MYI_MAGIC
-    struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
-    struct.pack_into(">Q", myi, writeback._MYI_SPLIT, len(rows))
-    struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
-    (rdb / "refs.MYI").write_bytes(bytes(myi))
+    (rdb / "refs.MYI").write_bytes(_myi(len(rows), len(myd)))
     (rdb / "refs.frm").write_bytes(b"fake frm")
 
     enl = tmp_path / "Lib.enl"
@@ -305,13 +331,7 @@ def library_with_a_chained_record(tmp_path: Path) -> tuple[Path, Path]:
     last = _last_block(chunk2)
     myd = head + mid + last + _whole_block(row2)
     (rdb / "refs.MYD").write_bytes(myd)
-
-    myi = bytearray(256)
-    myi[0:4] = myisam.MYI_MAGIC
-    struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
-    struct.pack_into(">Q", myi, writeback._MYI_SPLIT, 2)
-    struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
-    (rdb / "refs.MYI").write_bytes(bytes(myi))
+    (rdb / "refs.MYI").write_bytes(_myi(4, len(myd)))
     (rdb / "refs.frm").write_bytes(b"fake frm")
 
     enl = tmp_path / "Lib.enl"
@@ -359,6 +379,219 @@ def test_chained_shrink_survives_the_files_self_verification(library_with_a_chai
     writeback.set_column(rdb, enl, {1: ""}, column="notes")
     writeback.set_column(rdb, enl, {1: "back again"}, column="notes")
     assert _read(rdb)[1]["notes"] == b"back again"
+
+
+# --------------------------------------------------------------------------
+# the free-space ledger: `del`/`empty`/`dellink` in the .MYI state header,
+# plus the chain threaded through the deleted blocks themselves.
+#
+# These are regression tests for a real failure. An earlier version emitted
+# deleted blocks with a zero next-pointer and never touched the ledger. Every
+# record still read back correctly — `_verify` passed — but EndNote decided
+# the table was damaged, and the only visible symptom on a real 845-record
+# library was that clicking a column heading stopped sorting it.
+# --------------------------------------------------------------------------
+
+
+def test_a_freed_span_is_threaded_into_the_free_chain(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    before = _myi_state(rdb)
+    assert before["del"] == 0 and before["dellink"] == writeback._FREE_LIST_END
+
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    after = _myi_state(rdb)
+    deleted = [b for b in _blocks(rdb / "refs.MYD") if b.deleted]
+    assert len(deleted) == 1
+    assert after["del"] == 1
+    assert after["empty"] == deleted[0].span
+    # dellink names the block, and the block ends the chain
+    assert after["dellink"] == deleted[0].pos
+    assert deleted[0].next_pos == writeback._FREE_LIST_END
+
+
+def test_a_deleted_block_never_points_at_offset_zero(library_with_a_bloated_record):
+    """Zero is a real offset — the file's first block — not a null link."""
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    head = _blocks(rdb / "refs.MYD")[0]
+    assert head.pos == 0 and not head.deleted  # a live record lives at 0
+    for block in _blocks(rdb / "refs.MYD"):
+        if block.deleted:
+            assert block.next_pos != 0
+
+
+def test_reclaimed_continuation_blocks_all_join_the_free_chain(library_with_a_chained_record):
+    rdb, enl, pos_mid, pos_last = library_with_a_chained_record
+
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    state = _myi_state(rdb)
+    by_pos = {b.pos: b for b in _blocks(rdb / "refs.MYD")}
+    assert by_pos[pos_mid].deleted and by_pos[pos_last].deleted
+
+    walked, pos = [], state["dellink"]
+    while pos != writeback._FREE_LIST_END:
+        walked.append(pos)
+        pos = by_pos[pos].next_pos
+    assert sorted(walked) == sorted(b.pos for b in by_pos.values() if b.deleted)
+    assert state["del"] == len(walked)
+    assert state["empty"] == sum(by_pos[p].span for p in walked)
+
+
+def test_free_space_accumulates_across_separate_writes(library_with_a_chained_record):
+    """Each write pushes onto the existing chain instead of replacing it."""
+    rdb, enl, _pos_mid, _pos_last = library_with_a_chained_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    first = _myi_state(rdb)
+
+    writeback.set_column(rdb, enl, {2: "x" * 400}, column="notes")
+    writeback.set_column(rdb, enl, {2: ""}, column="notes")
+    second = _myi_state(rdb)
+
+    assert second["del"] >= first["del"]
+    deleted = [b for b in _blocks(rdb / "refs.MYD") if b.deleted]
+    assert second["del"] == len(deleted)
+    assert second["empty"] == sum(b.span for b in deleted)
+
+
+def test_write_is_refused_when_the_library_arrives_inconsistent(library):
+    """A pre-existing bad ledger is reported, not written over."""
+    rdb, enl = library
+    myi = bytearray((rdb / "refs.MYI").read_bytes())
+    struct.pack_into(">Q", myi, writeback._MYI_DEL, 3)  # claims 3, file has none
+    (rdb / "refs.MYI").write_bytes(bytes(myi))
+    before = (rdb / "refs.MYD").read_bytes()
+
+    with pytest.raises(writeback.WritebackError, match="the library as found"):
+        writeback.set_column(rdb, enl, {1: "x"}, column="custom_1")
+    assert (rdb / "refs.MYD").read_bytes() == before
+
+
+def test_a_free_chain_aimed_at_a_live_record_is_refused(library):
+    rdb, enl = library
+    myi = bytearray((rdb / "refs.MYI").read_bytes())
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, 0)  # offset 0 is record 1
+    (rdb / "refs.MYI").write_bytes(bytes(myi))
+
+    with pytest.raises(writeback.WritebackError, match="live record"):
+        writeback.set_column(rdb, enl, {1: "x"}, column="custom_1")
+
+
+def test_verify_free_space_catches_an_unrecorded_deleted_block(library_with_a_bloated_record):
+    """The exact shape of the original bug, asserted directly."""
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    data = (rdb / "refs.MYD").read_bytes()
+    myi = bytearray((rdb / "refs.MYI").read_bytes())
+    # Roll the ledger back to what the buggy version left behind: the
+    # deleted block is in the file, but nothing records it.
+    struct.pack_into(">Q", myi, writeback._MYI_DEL, 0)
+    struct.pack_into(">Q", myi, writeback._MYI_EMPTY, 0)
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, writeback._FREE_LIST_END)
+
+    with pytest.raises(writeback.WritebackError, match="deleted blocks"):
+        writeback._verify_free_space(data, bytes(myi), "test")
+
+
+# --------------------------------------------------------------------------
+# repair_free_space: putting a library damaged by the old code back together
+# --------------------------------------------------------------------------
+
+
+def _damage_the_ledger(rdb: Path) -> None:
+    """Recreate exactly what the buggy version left behind.
+
+    Deleted blocks present and every record intact, but zero next-pointers
+    and a ledger that never heard about them.
+    """
+    data = bytearray((rdb / "refs.MYD").read_bytes())
+    myi = bytearray((rdb / "refs.MYI").read_bytes())
+    for block in _blocks(rdb / "refs.MYD"):
+        if block.deleted:
+            struct.pack_into(">Q", data, block.pos + 4, 0)
+    struct.pack_into(">Q", myi, writeback._MYI_DEL, 0)
+    struct.pack_into(">Q", myi, writeback._MYI_EMPTY, 0)
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, writeback._FREE_LIST_END)
+    (rdb / "refs.MYD").write_bytes(bytes(data))
+    (rdb / "refs.MYI").write_bytes(bytes(myi))
+
+
+def test_repair_rebuilds_the_ledger_and_the_chain(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    _damage_the_ledger(rdb)
+    before = _read(rdb)
+
+    result = writeback.repair_free_space(rdb, enl, dry_run=False)
+
+    assert result["repaired"] is True
+    assert result["was_consistent"] is False
+    assert Path(result["backup_path"]).is_dir()
+
+    deleted = [b for b in _blocks(rdb / "refs.MYD") if b.deleted]
+    state = _myi_state(rdb)
+    assert state["del"] == len(deleted)
+    assert state["empty"] == sum(b.span for b in deleted)
+    assert state["dellink"] == min(b.pos for b in deleted)
+    assert deleted[-1].next_pos == writeback._FREE_LIST_END
+    assert _read(rdb) == before  # not one record touched
+
+
+def test_repair_leaves_a_healthy_library_alone(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    myd_before = (rdb / "refs.MYD").read_bytes()
+    myi_before = (rdb / "refs.MYI").read_bytes()
+
+    result = writeback.repair_free_space(rdb, enl, dry_run=False)
+
+    assert result["was_consistent"] is True
+    assert result["repaired"] is False
+    assert (rdb / "refs.MYD").read_bytes() == myd_before
+    assert (rdb / "refs.MYI").read_bytes() == myi_before
+
+
+def test_repair_dry_run_writes_nothing(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    _damage_the_ledger(rdb)
+    myd_before = (rdb / "refs.MYD").read_bytes()
+    myi_before = (rdb / "refs.MYI").read_bytes()
+
+    result = writeback.repair_free_space(rdb, enl)
+
+    assert result["repaired"] is False
+    assert result["would_rewrite_bytes"] > 0
+    assert (rdb / "refs.MYD").read_bytes() == myd_before
+    assert (rdb / "refs.MYI").read_bytes() == myi_before
+
+
+def test_repair_updates_the_enl_mirror(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    _damage_the_ledger(rdb)
+
+    writeback.repair_free_space(rdb, enl, dry_run=False)
+
+    with zipfile.ZipFile(enl) as z:
+        assert z.read("refs.MYD") == (rdb / "refs.MYD").read_bytes()
+
+
+def test_a_repaired_library_accepts_writes_again(library_with_a_bloated_record):
+    """The whole point: the write path refuses a damaged library."""
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    _damage_the_ledger(rdb)
+
+    with pytest.raises(writeback.WritebackError, match="the library as found"):
+        writeback.set_column(rdb, enl, {2: "x"}, column="custom_1")
+
+    writeback.repair_free_space(rdb, enl, dry_run=False)
+    writeback.set_column(rdb, enl, {2: "x"}, column="custom_1")
+    assert _read(rdb)[2]["custom_1"] == b"x"
 
 
 # --------------------------------------------------------------------------

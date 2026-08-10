@@ -52,6 +52,10 @@ def library(tmp_path: Path) -> tuple[Path, Path]:
     struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
     struct.pack_into(">Q", myi, writeback._MYI_SPLIT, len(rows))
     struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
+    # No deleted blocks yet, so the free chain is empty — which MyISAM
+    # spells with the end-of-chain sentinel, never zero (offset 0 is the
+    # file's first block, a live record).
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, writeback._FREE_LIST_END)
     (rdb / "refs.MYI").write_bytes(bytes(myi))
     (rdb / "refs.frm").write_bytes(b"fake frm")
 

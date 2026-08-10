@@ -89,6 +89,38 @@ def surname_of(abbrev_author):
     return norm_name(abbrev_author.split(",", 1)[0])
 
 
+def same_surname(local_author, crossref_family):
+    """Whether a stored author and a CrossRef `family` name are the same person.
+
+    Substring either way, because the two sources disagree about compound
+    and hyphenated surnames often enough to matter ("Dall'Olio" vs
+    "DallOlio", "Zhang" vs "Zhang-Li").
+    """
+    local, remote = surname_of(local_author), norm_name(crossref_family)
+    return local == remote or local in remote or remote in local
+
+
+def author_list_is_truncated(authors, crossref_names):
+    """Whether `authors` looks like the head of `crossref_names`, cut short.
+
+    The `et al.` import problem: a record keeps the first author or three
+    and drops the rest. Completing that from CrossRef is only safe when the
+    names actually line up, so this demands a strict positional surname
+    prefix -- same people, same order, just fewer of them. Anything else
+    (a different order, an extra author CrossRef does not know about, a
+    genuine disagreement) fails here and is left for a human.
+
+    A local list *longer* than CrossRef's is never treated as truncated:
+    CrossRef itself is sometimes incomplete, and dropping authors a record
+    already has would be the worse error.
+    """
+    if len(authors) >= len(crossref_names):
+        return False
+    return all(
+        same_surname(author, crossref_names[i][0]) for i, author in enumerate(authors)
+    )
+
+
 NOTES_CITATION_TAIL_RE = re.compile(r"doi:\s*\S+\.?\s*$", re.I)
 
 

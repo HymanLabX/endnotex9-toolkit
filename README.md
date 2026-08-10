@@ -139,6 +139,16 @@ instead of saving a configuration that cannot run.
 `setup` stores paths and the local SQLite index in the operating system's application-config
 directory. It does not copy the EndNote library into this repository.
 
+**On Windows, the library `setup` writes is a fallback, not a pin.** Every `load_config` call
+(every CLI command, every ref-clean script run, and the MCP server's own startup) checks the
+registry for whichever library EndNote for Windows currently has open (`Recent Libraries\File1`,
+confirmed by a file-lock check — a merely recently used but now-closed library never counts) and
+prefers it over the stored path whenever they differ. Point `setup` at a library once; afterward,
+whichever `.enl` you actually have open in EndNote takes over automatically, and the stored path
+is only used when nothing is currently open (EndNote isn't running, or you're on a non-Windows
+platform, or the library is only ever an XML export). `endnotex9-mcp status` marks the line
+`(auto-detected: currently open in EndNote)` when this override is active.
+
 ## Connect an MCP client
 
 ### Codex

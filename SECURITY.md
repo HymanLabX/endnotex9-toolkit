@@ -55,6 +55,36 @@ Both write tools default to `dry_run=True` (diff only, nothing written) and, on 
 always back up the whole library to a fresh timestamped folder before touching anything — see
 `writeback.backup_library` and the "Safety model" section of the README.
 
+**A worked example of the above reasoning failing, and what changed because of it.** Everything in
+the two paragraphs above was derived from a single library. On the second real library this package
+met, part of it did not hold. That library's `csort` table was 14 KB and in active use (the
+reference library's was empty, 0 rows), and its records did take the shrink path that produces
+MyISAM *deleted blocks* — a path the reference library never exercised. Deleted blocks turned out
+to be entries in a file-level ledger, not just spare space: `refs.MYI`'s state header counts them
+(`del`, offset 36) and their bytes (`empty`, offset 76) and points at the first of them
+(`dellink`, offset 52), and the blocks are chained through their own next-pointers. Writing the
+blocks while leaving that ledger untouched produced a library where every record read back
+correctly and the existing `_verify` pass was clean, but EndNote judged the table damaged; the only
+symptom the user ever saw was that clicking a column heading stopped sorting the library, with no
+error message anywhere. The same code also wrote a zero next-pointer as though it meant "no link",
+when MyISAM's sentinel is `0xFFFFFFFFFFFFFFFF` and offset 0 is a real position — the first block in
+the file — so the free chain was aimed at record 1's head block, which would have cost real data
+the first time MyISAM reused that span.
+
+Three things changed as a result, in decreasing order of how much they matter:
+
+- `writeback._verify_free_space` re-derives the whole ledger from the finished bytes and fails the
+  write on any mismatch, including a chain that reaches a live record. It runs against the original
+  file too, so a library that arrives inconsistent is reported instead of written over. The point is
+  that this class of damage is now caught before it reaches EndNote rather than by a user noticing
+  a UI feature has gone quiet weeks later.
+- `_verify` alone was never sufficient. "Every record reads back correctly" and "the file is a valid
+  MyISAM table" are different claims, and only the first was being checked. Any future extension
+  should assume the same gap exists for whatever structure it touches.
+- The rule in the next paragraph — exercise a throwaway copy of *that* library first — was the
+  control that would have caught this, and it was skipped. It is not optional, and "the same
+  columns already worked on another library" is not a substitute for it.
+
 **EndNote holding the library open during a commit is a real, unmitigated risk beyond what the
 above covers.** These tools write `refs.MYD`/`refs.MYI`/`.enl` directly, outside EndNote's own
 process. If EndNote still has the library open: the write may simply fail on a sharing conflict

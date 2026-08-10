@@ -86,8 +86,19 @@ def test_pdf_dir_guess_gives_up_quietly(tmp_path: Path):
     assert config.default_pdf_dir(str(tmp_path / "absent.xml")) == ""
 
 
+# Every `load_config` here is otherwise a live check against whatever
+# EndNote actually has open on the machine running the tests — see
+# `detect_open_library`. Tests that just want to describe the on-disk
+# config, not whoever's dev machine happens to run them, pass this in
+# explicitly; `detect_open_library`'s own behaviour gets separate tests
+# below that don't.
+def _no_endnote_running(monkeypatch):
+    monkeypatch.setattr(config, "detect_open_library", lambda: "")
+
+
 def test_config_round_trip(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    _no_endnote_running(monkeypatch)
     saved = config.Config(endnote_xml="lib.xml", pdf_dir="pdfs", db_path=str(tmp_path / "x.db"))
     config.save_config(saved)
     assert config.load_config() == saved
@@ -96,6 +107,7 @@ def test_config_round_trip(tmp_path: Path, monkeypatch):
 def test_config_ignores_unknown_keys(tmp_path: Path, monkeypatch):
     # A config written by a newer version must not stop an older one loading.
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    _no_endnote_running(monkeypatch)
     (tmp_path / "config.yaml").write_text(
         yaml.safe_dump({"endnote_xml": "lib.xml", "future_option": 42}), encoding="utf-8"
     )
@@ -106,6 +118,7 @@ def test_config_ignores_unknown_keys(tmp_path: Path, monkeypatch):
 
 def test_config_accepts_a_direct_library_without_xml(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    _no_endnote_running(monkeypatch)
     (tmp_path / "config.yaml").write_text(
         yaml.safe_dump({"library_path": "C:/Research.enl"}), encoding="utf-8"
     )
@@ -118,3 +131,148 @@ def test_missing_config_points_at_the_wizard(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path / "empty")
     with pytest.raises(FileNotFoundError, match="endnotex9-mcp setup"):
         config.load_config()
+
+
+# --------------------------------------------------------------------------
+# detect_open_library / load_config's live override
+# --------------------------------------------------------------------------
+
+
+def test_load_config_prefers_the_currently_open_library_over_the_saved_one(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    stale = tmp_path / "Old Library.enl"
+    stale.write_bytes(b"")
+    open_now = tmp_path / "New Library.enl"
+    open_now.write_bytes(b"")
+    config.save_config(config.Config(library_path=str(stale)))
+
+    monkeypatch.setattr(config, "detect_open_library", lambda: str(open_now))
+
+    loaded = config.load_config()
+    assert loaded.library_path == str(open_now)
+
+
+def test_load_config_leaves_pdf_dir_alone_when_no_sibling_data_folder_exists(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    open_now = tmp_path / "New Library.enl"
+    open_now.write_bytes(b"")
+    config.save_config(config.Config(library_path="", pdf_dir="/configured/pdfs"))
+
+    monkeypatch.setattr(config, "detect_open_library", lambda: str(open_now))
+
+    loaded = config.load_config()
+    assert loaded.library_path == str(open_now)
+    assert loaded.pdf_dir == "/configured/pdfs"  # no <Library>.Data/PDF beside open_now
+
+
+def test_load_config_derives_pdf_dir_from_the_detected_library(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    open_now = tmp_path / "New Library.enl"
+    open_now.write_bytes(b"")
+    pdf_dir = tmp_path / "New Library.Data" / "PDF"
+    pdf_dir.mkdir(parents=True)
+    config.save_config(config.Config(library_path="", pdf_dir=""))
+
+    monkeypatch.setattr(config, "detect_open_library", lambda: str(open_now))
+
+    loaded = config.load_config()
+    assert loaded.pdf_dir == str(pdf_dir)
+
+
+def test_load_config_is_a_noop_when_the_detected_library_matches_the_saved_one(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    library = tmp_path / "Library.enl"
+    library.write_bytes(b"")
+    config.save_config(config.Config(library_path=str(library), pdf_dir="/configured/pdfs"))
+
+    monkeypatch.setattr(config, "detect_open_library", lambda: str(library))
+
+    loaded = config.load_config()
+    assert loaded.library_path == str(library)
+    assert loaded.pdf_dir == "/configured/pdfs"  # untouched -- nothing changed
+
+
+def test_load_config_falls_back_to_the_saved_library_when_nothing_is_detected(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    config.save_config(config.Config(library_path="C:/Research.enl"))
+
+    monkeypatch.setattr(config, "detect_open_library", lambda: "")
+
+    loaded = config.load_config()
+    assert loaded.library_path == "C:/Research.enl"
+
+
+def test_detect_open_library_is_a_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    assert config.detect_open_library() == ""
+
+
+def test_detect_open_library_ignores_a_recent_but_unlocked_library(tmp_path: Path, monkeypatch):
+    """MRU proves 'recently opened', not 'open now' -- see the docstring."""
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    closed = tmp_path / "Closed Library.enl"
+    closed.write_bytes(b"")
+
+    class _FakeKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    fake_winreg = type(
+        "winreg",
+        (),
+        {
+            "HKEY_CURRENT_USER": None,
+            "OpenKey": staticmethod(lambda *a, **kw: _FakeKey()),
+            "QueryValueEx": staticmethod(lambda key, name: (str(closed), 1)),
+        },
+    )
+    monkeypatch.setitem(__import__("sys").modules, "winreg", fake_winreg)
+
+    # `closed` opens cleanly (nothing has it locked) -> not reported as open.
+    assert config.detect_open_library() == ""
+
+
+def test_detect_open_library_returns_a_locked_mru_entry(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    open_now = tmp_path / "Open Library.enl"
+    open_now.write_bytes(b"")
+
+    class _FakeKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    fake_winreg = type(
+        "winreg",
+        (),
+        {
+            "HKEY_CURRENT_USER": None,
+            "OpenKey": staticmethod(lambda *a, **kw: _FakeKey()),
+            "QueryValueEx": staticmethod(lambda key, name: (str(open_now), 1)),
+        },
+    )
+    monkeypatch.setitem(__import__("sys").modules, "winreg", fake_winreg)
+
+    real_open = __import__("builtins").open
+
+    def deny_write(path, mode="r", *a, **kw):
+        if Path(path) == open_now:
+            raise PermissionError("simulated: EndNote has this open")
+        return real_open(path, mode, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", deny_write)
+
+    assert config.detect_open_library() == str(open_now)
