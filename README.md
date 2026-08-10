@@ -140,7 +140,7 @@ instead of saving a configuration that cannot run.
 directory. It does not copy the EndNote library into this repository.
 
 **On Windows, the library `setup` writes is a fallback, not a pin.** Every `load_config` call
-(every CLI command, every ref-clean script run, and the MCP server's own startup) checks the
+(every CLI command, every lit-clean script run, and the MCP server's own startup) checks the
 registry for whichever library EndNote for Windows currently has open (`Recent Libraries\File1`,
 confirmed by a file-lock check — a merely recently used but now-closed library never counts) and
 prefers it over the stored path whenever they differ. Point `setup` at a library once; afterward,

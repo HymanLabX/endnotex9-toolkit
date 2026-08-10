@@ -24,7 +24,7 @@ from pathlib import Path
 # in; a made-up one is worse than none, so the default sends no address.
 _MAILTO = os.environ.get("CROSSREF_MAILTO", "").strip()
 HEADERS = {
-    "User-Agent": f"ref-clean/1.0 (mailto:{_MAILTO})" if _MAILTO else "ref-clean/1.0"
+    "User-Agent": f"lit-clean/1.0 (mailto:{_MAILTO})" if _MAILTO else "lit-clean/1.0"
 }
 
 

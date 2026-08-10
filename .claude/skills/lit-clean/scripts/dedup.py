@@ -1,4 +1,4 @@
-"""ref-clean dedup: detect duplicates, merge unique fields into the survivor,
+"""lit-clean dedup: detect duplicates, merge unique fields into the survivor,
 tag the loser for the user to delete in EndNote.
 
 This never deletes a record. It:
@@ -14,8 +14,8 @@ This never deletes a record. It:
      merge, via commit.update_reference_fields), and any LIST_FIELDS values
      unique to the delete side are appended onto the keep side's list.
   4. Tags the delete side via commit.mark_records (default column custom_7,
-     default marker REF_CLEAN_DUPLICATE) so the user can build an EndNote
-     Smart Group ("Custom 7 contains REF_CLEAN_DUPLICATE") and delete the
+     default marker LIT_CLEAN_DUPLICATE) so the user can build an EndNote
+     Smart Group ("Custom 7 contains LIT_CLEAN_DUPLICATE") and delete the
      matches themselves.
 
 Usage:
@@ -107,7 +107,7 @@ def build_merge(rows, keep_rec, delete_rec):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", action="store_true")
-    ap.add_argument("--marker", default="REF_CLEAN_DUPLICATE")
+    ap.add_argument("--marker", default="LIT_CLEAN_DUPLICATE")
     ap.add_argument("--column", default="custom_7")
     args = ap.parse_args()
 

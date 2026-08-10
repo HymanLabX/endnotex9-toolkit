@@ -1,9 +1,9 @@
 ---
-name: ref-clean
-description: Clean up an EndNote X9 library through endnotex9-mcp -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /ref-clean, or asks to clean, dedupe, or fix up their EndNote library's metadata.
+name: lit-clean
+description: Clean up an EndNote X9 library through endnotex9-mcp -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /lit-clean, or asks to clean, dedupe, or fix up their EndNote library's metadata.
 ---
 
-# ref-clean
+# lit-clean
 
 Three capabilities over the library configured for this project's `endnotex9-mcp` server
 (`~/.config/endnotex9-mcp/config.yaml` or the platform equivalent — the scripts below load it the
@@ -87,7 +87,7 @@ Parse the skill's `args` loosely, not as a strict CLI:
 4. `python scripts/dedup.py --commit`. This merges first, then tags — report both `records_written`
    counts and the `backup_path` values.
 5. Tell the user exactly what to do next in EndNote: build a Smart Group with the condition
-   `<column> contains <marker>` (defaults `custom_7` / `REF_CLEAN_DUPLICATE`, both scripted flags
+   `<column> contains <marker>` (defaults `custom_7` / `LIT_CLEAN_DUPLICATE`, both scripted flags
    if the user wants different ones), review it, and delete the matches themselves. Offer to
    re-verify afterward (e.g. `library_stats`) if they want confirmation the count dropped.
 
@@ -99,7 +99,7 @@ Parse the skill's `args` loosely, not as a strict CLI:
    14 days regardless of count — mention if the user wants different thresholds via
    `--keep-backups`/`--backup-age-days`).
 3. Unless trust mode: show the counts (not necessarily every path) and wait for confirmation.
-4. `python scripts/files.py --commit`. Orphaned PDFs are *moved* to `<pdf_dir>/_ref_clean_orphans/`
+4. `python scripts/files.py --commit`. Orphaned PDFs are *moved* to `<pdf_dir>/_lit_clean_orphans/`
    (reversible — tell the user where, so they can delete that folder themselves once they've
    checked it), not deleted outright. Excess backups are deleted for real, since a backup existing
    only to be deleted by the very next backup isn't protecting anything — but only the ones that

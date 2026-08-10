@@ -1,4 +1,4 @@
-"""ref-clean metadata: fill in / correct text fields, author list, keyword list.
+"""lit-clean metadata: fill in / correct text fields, author list, keyword list.
 
 Two-source waterfall per field, same as the proven session run:
   author / journal  -> same-record source first (Notes / alternate_title),

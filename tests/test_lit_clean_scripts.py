@@ -1,4 +1,4 @@
-"""The ref-clean skill's scripts.
+"""The lit-clean skill's scripts.
 
 These write to a real EndNote library, which makes them the least
 forgiving code in the repository and, until now, the only part with no
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "ref-clean" / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "lit-clean" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import common  # noqa: E402
@@ -311,6 +311,20 @@ def test_a_second_run_does_not_re_flag_its_own_quarantine(tmp_path: Path):
         shutil.move(str(p), str(quarantine / p.name))
 
     assert files_script.find_orphaned_pdfs(rows, pdf_dir)[0] == []
+
+
+def test_the_pre_rename_quarantine_folder_is_still_skipped(tmp_path: Path):
+    """A library quarantined while this skill was called ref-clean has files
+    sitting in `_ref_clean_orphans` awaiting the user's review. Forgetting
+    the old name would move them a second time, into the new folder,
+    unannounced."""
+    pdf_dir = tmp_path / "PDF"
+    legacy = pdf_dir / "_ref_clean_orphans"
+    legacy.mkdir(parents=True)
+    (legacy / "already-quarantined.pdf").write_bytes(b"junk")
+
+    assert "_ref_clean_orphans" in files_script.QUARANTINE_DIRNAMES
+    assert files_script.find_orphaned_pdfs({}, pdf_dir)[0] == []
 
 
 def test_backups_beyond_the_recency_count_and_age_are_prunable(tmp_path: Path):
