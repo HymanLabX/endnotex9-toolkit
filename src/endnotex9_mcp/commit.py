@@ -5,14 +5,22 @@ indexed, not tied back to a term list, not a sort key). This module adds the
 *policy* half on top, for three purposes:
 
 * filling in or correcting ordinary text fields — bibliographic fields like
-  volume/issue/pages, the journal name, and notes — that import left blank
-  or wrong;
+  volume/issue/pages, the journal name, notes, the title, and the abstract
+  — that import left blank or wrong;
 * correcting the author list and keyword list, the two fields that back
   EndNote's own Authors/Keywords term lists, verified safe by reading
   `terms.MYD` directly (see `writeback.py`'s module docstring for the
   byte-level read that established this);
 * tagging records with a marker so the user can build an EndNote Smart
   Group and delete the matches themselves, inside EndNote.
+
+`year` is deliberately absent: it is one of only two MyISAM keys on `refs`
+(`writeback.py`'s docstring), so writing it needs real B-tree surgery this
+package does not implement — a 2026-08 spike against the real `refs.MYI`
+confirmed the key layout (two roots, one page each, accounting for all 19
+index pages) but stopped short of the page-internal format and the
+insert/delete/rebalance algorithm needed to touch it safely. Treat `year`,
+and record deletion generally, as a separate, larger project.
 
 Nothing here ever deletes a record or touches `custom_1`, which
 `classification.py`/`writeplan.py` already own. Every write is backed up
@@ -40,6 +48,8 @@ TEXT_FIELDS = {
     "number_of_volumes": "number_of_volumes",
     "journal": "secondary_title",
     "notes": "notes",
+    "title": "title",
+    "abstract": "abstract",
 }
 
 # Same idea for fields EndNote stores as several values joined by

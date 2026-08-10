@@ -70,12 +70,41 @@ infer it:
 * `notes` is not named by any `TermListSpec` row at all — same free-text
   category as `research_notes`.
 
-Treat a first real run of any of these five (bibliographic or author/
-journal/keyword/notes) against a *different* library as unproven until it
-has been exercised against a throwaway copy of that library and that copy
-reopens in EndNote with no "needs repair" prompt, sorts normally, and
-searches normally — see `backup_library` and SECURITY.md. This library's own
-`terms.MYD` was read, never written, in reaching the conclusion above.
+**`title` and `abstract`** were the last two added, and `title` got the most
+scrutiny of anything on this list — it is the one field on the EndNote
+sort menu (see above) that a corruption would be most visible and least
+forgivable in. Rather than lean on the same reasoning already used for
+`author`/`secondary_title`/`keywords`, the real `refs.MYI` was read at the
+byte level to settle it directly:
+
+* The file is exactly 19 x 1024 bytes — fixed-size index pages. Two
+  page-aligned pointers sit next to each other in the header (offsets 124
+  and 132): `1024` (page 1) and `13312` (page 13). Given the two-key fact
+  above, these are `key_root[0]` and `key_root[1]` — the B-tree roots for
+  `id` and `yearIndex`, and nothing else. Page 13 settles which is which:
+  it contains the literal bytes for the ASCII text `"2017"`, a year value,
+  confirming `yearIndex` is keyed there (and that MyISAM indexed `year` as
+  packed text, not a binary integer — one more reason it needs its own
+  B-tree-surgery project rather than joining this list).
+* Walking the rest of the file by page: 1 header page, the two root pages
+  above, 11 dense pages reachable under page 1 and 5 dense pages reachable
+  under page 13 — 1 + 2 + 11 + 5 = 19, exactly the file's page count, with
+  no leftover pages a `title` (or anything else) index could be hiding in.
+  Two keys, fully accounted for, confirmed independently of the module
+  docstring's original claim rather than just trusting it.
+* `title` is therefore in the same position `author`/`secondary_title`/
+  `keywords` were: not a key, not named by any `TermListSpec` term list,
+  and covered only by the same sort cache already shown to tolerate
+  staleness. `abstract` is stronger still — it is not even on EndNote's
+  sort-menu list, so the sort-cache question does not apply to it at all.
+
+Treat a first real run of any of these seven (bibliographic, author/
+journal/keyword/notes, or title/abstract) against a *different* library as
+unproven until it has been exercised against a throwaway copy of that
+library and that copy reopens in EndNote with no "needs repair" prompt,
+sorts normally, and searches normally — see `backup_library` and
+SECURITY.md. This library's own `terms.MYD` and `refs.MYI` were read, never
+written, in reaching the conclusions above.
 
 Every write verifies itself: the resulting file is walked block by block,
 every record is decoded again, the targets must hold exactly the intended
@@ -123,7 +152,10 @@ __all__ = [
 # `author`/`secondary_title`/`keywords` back three of EndNote's term lists —
 # see the module docstring for the byte-level `terms.MYD` read that shows
 # those lists are a denormalized UI cache with no link back to `refs`, not a
-# structure these columns need to stay in sync with.
+# structure these columns need to stay in sync with. `title`/`abstract` were
+# verified last, `title` via a byte-level read of the real `refs.MYI` that
+# accounts for both of the library's two keys (`id`, `yearIndex`) and finds
+# `title` in neither — see the module docstring.
 WRITABLE_COLUMNS = frozenset(
     {
         "custom_1",
@@ -143,6 +175,8 @@ WRITABLE_COLUMNS = frozenset(
         "author",
         "secondary_title",
         "keywords",
+        "title",
+        "abstract",
     }
 )
 
@@ -189,15 +223,48 @@ _MAX_PAD = 255
 # MyISAM never emits a block shorter than this, and keeps them 4-byte aligned.
 _MIN_BLOCK = 20
 _ALIGN = 4
+# A deleted (free) block's own header: 1 type byte + 3-byte length + 8-byte
+# next-pointer into MyISAM's free-block chain.
+_DELETED_BLOCK_HEADER = 12
+
+
+def _deleted_block(size: int) -> bytes:
+    """A type-0 (deleted) block spanning exactly `size` bytes.
+
+    MyISAM threads these into a reusable-space chain via the next-pointer;
+    this package only ever rewrites existing records, never inserts new
+    ones, so there is nothing to reuse the space for and the pointer is left
+    as a sentinel zero rather than spliced into that chain. A decoder still
+    walks straight over it — `read_records` skips anything `deleted` — so
+    the only cost is that MyISAM's own inserts will not reclaim this span.
+    """
+    if size < _DELETED_BLOCK_HEADER:
+        raise WritebackError(f"a deleted-block filler needs at least {_DELETED_BLOCK_HEADER} bytes, got {size}")
+    return b"\x00" + size.to_bytes(3, "big") + b"\x00" * 8 + b"\x00" * (size - _DELETED_BLOCK_HEADER)
 
 
 def _terminating(is_head: bool, payload: bytes, span: int) -> bytes | None:
-    """A whole-record (type 3) or last (type 9) block filling `span` exactly."""
+    """A whole-record (type 3) or last (type 9) block filling `span` exactly.
+
+    A record that shrinks a lot can leave more slack than the single pad
+    byte can record (over `_MAX_PAD`). Rather than stretch that field past
+    what it holds, the excess becomes a separate deleted-block record right
+    after a normally-padded terminator — MyISAM's own answer to a record
+    shrinking in place without moving its head block (and therefore its
+    index entry). `pad > _MAX_PAD` already guarantees more than
+    `_DELETED_BLOCK_HEADER` bytes of slack to split off, since
+    `_MAX_PAD > _DELETED_BLOCK_HEADER`.
+    """
     pad = span - 4 - len(payload)
-    if pad < 0 or pad > _MAX_PAD:
+    if pad < 0:
         return None
     kind = 3 if is_head else 9
-    return bytes([kind]) + struct.pack(">H", len(payload)) + bytes([pad]) + payload + b"\x00" * pad
+    if pad <= _MAX_PAD:
+        return bytes([kind]) + struct.pack(">H", len(payload)) + bytes([pad]) + payload + b"\x00" * pad
+    target_pad = min(_MAX_PAD, pad - _DELETED_BLOCK_HEADER)
+    leftover = pad - target_pad
+    head = bytes([kind]) + struct.pack(">H", len(payload)) + bytes([target_pad]) + payload + b"\x00" * target_pad
+    return head + _deleted_block(leftover)
 
 
 def _continuing(is_head: bool, chunk: bytes, row_len: int, next_pos: int) -> bytes:
@@ -231,6 +298,15 @@ def _pack_chain(chain: list, row: bytes, eof: int) -> tuple[list[tuple[int, byte
         done = _terminating(is_head, remaining, span)
         if done is not None:
             patches.append((block.pos, done))
+            # The row fit before the chain's original end. Any blocks that
+            # used to continue it are no longer reachable from anywhere —
+            # not from this now-terminating block, and not from the free
+            # list — so they'd sit in the file as unlinked garbage forever.
+            # Reclaim each one as its own deleted block instead of leaving
+            # it dangling.
+            for leftover in chain[i + 1 :]:
+                leftover_span = leftover.header_len + leftover.data_len + (leftover.pad or 0)
+                patches.append((leftover.pos, _deleted_block(leftover_span)))
             return patches, b""
 
         header = 13 if is_head else 11

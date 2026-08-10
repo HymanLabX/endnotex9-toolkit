@@ -120,7 +120,7 @@ def test_a_field_already_matching_is_reported_but_not_written(library):
 def test_refuses_non_writable_fields(library):
     rdb, enl = library
     with pytest.raises(commit.CommitError, match="not fields this tool may write"):
-        commit.update_reference_fields(rdb, enl, {1: {"title": "New Title"}}, dry_run=True)
+        commit.update_reference_fields(rdb, enl, {1: {"year": "2030"}}, dry_run=True)
 
 
 def test_refuses_unknown_record_numbers(library):
@@ -158,6 +158,20 @@ def test_journal_and_notes_are_plain_text_fields(library):
     row = _read(rdb)[1]
     assert row["secondary_title"] == b"Journal of Physical Chemistry Letters"
     assert "notes" not in row
+
+
+def test_title_and_abstract_are_plain_text_fields(library):
+    rdb, enl = library
+    result = commit.update_reference_fields(
+        rdb,
+        enl,
+        {1: {"title": "A corrected title", "abstract": "A corrected abstract."}},
+        dry_run=False,
+    )
+    assert result["records_written"] == 1
+    row = _read(rdb)[1]
+    assert row["title"] == b"A corrected title"
+    assert row["abstract"] == b"A corrected abstract."
 
 
 def test_author_and_keywords_are_list_fields(library):

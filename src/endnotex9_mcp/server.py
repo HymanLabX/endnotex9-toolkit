@@ -575,12 +575,13 @@ def update_reference_fields(updates: list[dict], dry_run: bool = True) -> dict:
 
     Each item of `updates` needs `rec_number` plus one or more fields.
     Plain-text fields take a string: `volume`, `issue`, `pages`,
-    `article_number`, `number_of_volumes`, `journal`, `notes`. `author` and
-    `keywords` take a list of strings and replace the whole list, e.g.
-    `[{"rec_number": 42, "volume": "14", "issue": "3",
+    `article_number`, `number_of_volumes`, `journal`, `notes`, `title`,
+    `abstract`. `author` and `keywords` take a list of strings and replace
+    the whole list, e.g. `[{"rec_number": 42, "volume": "14", "issue": "3",
        "author": ["Zerovnik, Andrej", "Dall'Olio, Stefano"]}]`.
-    No other field may be set this way — title, year, and every other
-    column stay read-only.
+    No other field may be set this way — `year` cannot be changed at all
+    (it is a MyISAM index key; writing it needs B-tree surgery this server
+    does not implement), and every column not named above stays read-only.
 
     Defaults to `dry_run=True`, which returns the diff (old value vs. new
     value for every field requested) without touching EndNote. Call again

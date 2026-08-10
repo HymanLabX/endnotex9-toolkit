@@ -12,8 +12,9 @@ to a third-party service.
 > `endnotex9-mcp crosscheck` before trusting a later EndNote version. Almost every MCP tool is
 > read-only. Two tools — `update_reference_fields` and `mark_references` — can write to the
 > library, and only to a narrow, pre-verified set of columns: bibliographic fields (volume,
-> issue, pages, article number, number of volumes), journal, notes, the author list, the keyword
-> list, or the unused Custom 2–7 fields. Both default to a no-op preview (`dry_run=True`) and back
+> issue, pages, article number, number of volumes), journal, notes, title, abstract, the author
+> list, the keyword list, or the unused Custom 2–7 fields. `year` cannot be changed at all — it
+> is a MyISAM index key. Both default to a no-op preview (`dry_run=True`) and back
 > up the whole library before any real write. See [Safety model](#safety-model).
 
 ## Features
@@ -25,8 +26,8 @@ to a third-party service.
 - Reproducible, review-gated classification with taxonomy, rules, evidence, conflict handling,
   holdout audits, and a read-only `Custom 1` writeback preview.
 - Two narrow, backup-first write tools: correcting text fields (volume, issue, pages, article
-  number, number of volumes, journal, notes, the author list, the keyword list), and tagging
-  records in Custom 2–7 so the user can bulk-act on them with an EndNote Smart Group.
+  number, number of volumes, journal, notes, title, abstract, the author list, the keyword list),
+  and tagging records in Custom 2–7 so the user can bulk-act on them with an EndNote Smart Group.
 - Incremental PDF text extraction, full-text search, and page-range reading by title or EndNote
   record number.
 - Consistent record-number, title, and DOI selectors with ambiguity reporting instead of
@@ -41,7 +42,8 @@ state and extracted PDF text live in a separate local SQLite index. `prepare_cla
 only produces a fingerprinted preview; there is still no commit path for the `Custom 1` topic field.
 
 Two tools do write to the library: `update_reference_fields` (volume, issue, pages, article
-number, number of volumes, journal, notes, author list, keyword list) and `mark_references` (a
+number, number of volumes, journal, notes, title, abstract, author list, keyword list; `year`
+cannot be changed — see below) and `mark_references` (a
 marker string into Custom 2–7, meant to drive an EndNote Smart Group rather than delete anything
 directly — this server never deletes a record). Both share the same guardrails:
 
@@ -57,7 +59,16 @@ directly — this server never deletes a record). Both share the same guardrails
   new ones missing) until the user reopens EndNote's Tools/References → Define Term Lists →
   Update List, which is a UI-only gap, not a corruption risk. See the module docstring in
   `writeback.py` for the full byte-level evidence, including empirical confirmation that a stale
-  `misc.DbSortedRecList` sort cache does not break a real library either.
+  `misc.DbSortedRecList` sort cache does not break a real library either. `title` got its own
+  pass for the same reason `year` didn't: a byte-level read of the real `refs.MYI` (19 x 1024-byte
+  pages) located both key roots directly — page 1 (`id`) and page 13 (`yearIndex`, confirmed by
+  finding the literal text `"2017"` inside it) — and every page in the file is accounted for
+  between the two trees, with none left over for a `title` index to hide in.
+- `year` cannot be written at all: it is one of the library's only two MyISAM keys, and changing
+  an indexed value means removing and reinserting a B-tree key, not just editing bytes in place.
+  A 2026-08 spike against the real `refs.MYI` (read-only) found the key roots and page layout but
+  stopped short of the page-internal format and the insert/delete/rebalance algorithm — treat
+  `year`, like record deletion, as a separate future project, not part of this tool.
 - Both tools default to `dry_run=True`: the first call always returns a diff and writes nothing.
   A second, explicit `dry_run=False` call is required to commit.
 - A commit only ever touches fields that actually change, and always backs up the entire library
@@ -234,7 +245,7 @@ declarative and bounded; arbitrary Python, SQL, and regular-expression execution
 
 | Tool | Purpose |
 |---|---|
-| `update_reference_fields` | Fill in or correct volume, issue, pages, article number, number of volumes, journal, notes, the author list, or the keyword list. Defaults to a `dry_run` diff preview; `dry_run=False` backs up the library and commits. |
+| `update_reference_fields` | Fill in or correct volume, issue, pages, article number, number of volumes, journal, notes, title, abstract, the author list, or the keyword list. Defaults to a `dry_run` diff preview; `dry_run=False` backs up the library and commits. |
 | `mark_references` | Tag records in Custom 2–7 with a marker (e.g. for an EndNote Smart Group to bulk-delete against). Same `dry_run`/backup pattern; never deletes anything itself. |
 
 See [Safety model](#safety-model) for exactly what these tools can and cannot touch.

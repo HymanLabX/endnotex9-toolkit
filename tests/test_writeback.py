@@ -181,15 +181,209 @@ def test_enl_mirror_is_repacked_and_stays_stored(library):
 
 
 # --------------------------------------------------------------------------
+# shrinking a record by more than one pad byte can record (_MAX_PAD)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def library_with_a_bloated_record(tmp_path: Path) -> tuple[Path, Path]:
+    """Record 1 starts with ~1000 bytes of notes; record 2 sits right after it.
+
+    Clearing record 1's notes leaves far more slack than one pad byte can
+    hold (`_MAX_PAD` is 255) — the real-world shape of clearing a PubMed
+    citation dump out of a bloated `notes` field.
+    """
+    rdb = tmp_path / "Lib.Data" / "rdb"
+    rdb.mkdir(parents=True)
+
+    rows = [
+        _row(1, title="Elastocaloric cooling", author="Li, D.", year="2022", notes="N" * 1000),
+        _row(2, title="Martensitic transformation", author="Smith, J.", year="2020"),
+    ]
+    myd = b"".join(_whole_block(r) for r in rows)
+    (rdb / "refs.MYD").write_bytes(myd)
+
+    myi = bytearray(256)
+    myi[0:4] = myisam.MYI_MAGIC
+    struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
+    struct.pack_into(">Q", myi, writeback._MYI_SPLIT, len(rows))
+    struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
+    (rdb / "refs.MYI").write_bytes(bytes(myi))
+    (rdb / "refs.frm").write_bytes(b"fake frm")
+
+    enl = tmp_path / "Lib.enl"
+    with zipfile.ZipFile(enl, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("refs.MYD", myd)
+        z.writestr("refs.frm", b"fake frm")
+    return rdb, enl
+
+
+def test_clearing_a_field_that_leaves_more_than_max_pad_slack(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    rows = _read(rdb)
+    assert "notes" not in rows[1]
+    assert rows[1]["title"] == b"Elastocaloric cooling"
+    # record 2's own data is untouched, meaning record 1's filler landed
+    # exactly where the old block ended without disturbing anything after it
+    assert rows[2]["title"] == b"Martensitic transformation"
+    assert rows[2]["author"] == b"Smith, J."
+
+
+def test_block_walk_after_shrinking_lands_on_a_deleted_filler_block(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    data = (rdb / "refs.MYD").read_bytes()
+    blocks, pos = [], 0
+    while pos < len(data):
+        block = myisam._read_block(data, pos)
+        blocks.append(block)
+        pos += max(block.span, 1)
+    assert pos == len(data)  # the whole file still walks cleanly to EOF
+    assert any(b.deleted for b in blocks)  # the freed slack became a real deleted block
+
+
+def test_shrinking_survives_the_files_self_verification(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    # set_column raises before writing anything if _verify disagrees, so a
+    # clean return here already proves the round trip is exact.
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    writeback.set_column(rdb, enl, {1: "back again"}, column="notes")
+    assert _read(rdb)[1]["notes"] == b"back again"
+
+
+# --------------------------------------------------------------------------
+# shrinking a record that was *already* chained across multiple blocks (not
+# just a single whole-record block with slack) enough that the new row fits
+# back inside the head block alone. The head block's own `_terminating` call
+# succeeds and returns early — the bug this guards against is that the
+# original middle/last continuation blocks, which live at their own file
+# offsets after the head, were left completely untouched: not overwritten,
+# not converted to deleted blocks. See `_pack_chain`.
+# --------------------------------------------------------------------------
+
+
+def _first_block(rec_len: int, chunk: bytes, next_pos: int) -> bytes:
+    return b"\x05" + struct.pack(">H", rec_len) + struct.pack(">H", len(chunk)) + struct.pack(">Q", next_pos) + chunk
+
+
+def _middle_block(chunk: bytes, next_pos: int) -> bytes:
+    return b"\x0b" + struct.pack(">H", len(chunk)) + struct.pack(">Q", next_pos) + chunk
+
+
+def _last_block(chunk: bytes) -> bytes:
+    pad = (-(len(chunk) + 4)) % 4
+    return b"\x09" + struct.pack(">H", len(chunk)) + bytes([pad]) + chunk + b"\x00" * pad
+
+
+@pytest.fixture
+def library_with_a_chained_record(tmp_path: Path) -> tuple[Path, Path]:
+    """Record 1 is stored as a real first/middle/last chain, not one block.
+
+    This is the shape 107 of the reference library's own 1561 records were
+    already in before this package ever wrote anything (see writeback.py's
+    module docstring) — a record big enough that MyISAM itself split it
+    across a head block plus continuation blocks appended after it. Record 2
+    sits immediately after the chain.
+    """
+    rdb = tmp_path / "Lib.Data" / "rdb"
+    rdb.mkdir(parents=True)
+
+    row1 = _row(1, title="Elastocaloric cooling", author="Li, D.", year="2022", notes="N" * 700)
+    row2 = _row(2, title="Martensitic transformation", author="Smith, J.", year="2020")
+
+    chunk0, chunk1, chunk2 = row1[:300], row1[300:600], row1[600:]
+    pos_head = 0
+    pos_mid = pos_head + 13 + len(chunk0)
+    pos_last = pos_mid + 11 + len(chunk1)
+
+    head = _first_block(len(row1), chunk0, pos_mid)
+    mid = _middle_block(chunk1, pos_last)
+    last = _last_block(chunk2)
+    myd = head + mid + last + _whole_block(row2)
+    (rdb / "refs.MYD").write_bytes(myd)
+
+    myi = bytearray(256)
+    myi[0:4] = myisam.MYI_MAGIC
+    struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
+    struct.pack_into(">Q", myi, writeback._MYI_SPLIT, 2)
+    struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
+    (rdb / "refs.MYI").write_bytes(bytes(myi))
+    (rdb / "refs.frm").write_bytes(b"fake frm")
+
+    enl = tmp_path / "Lib.enl"
+    with zipfile.ZipFile(enl, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("refs.MYD", myd)
+        z.writestr("refs.frm", b"fake frm")
+    return rdb, enl, pos_mid, pos_last
+
+
+def test_shrinking_a_chained_record_back_into_its_head_block(library_with_a_chained_record):
+    rdb, enl, _pos_mid, _pos_last = library_with_a_chained_record
+
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    rows = _read(rdb)
+    assert "notes" not in rows[1]
+    assert rows[1]["title"] == b"Elastocaloric cooling"
+    assert rows[2]["title"] == b"Martensitic transformation"
+    assert rows[2]["author"] == b"Smith, J."
+    assert len(myisam.read_records(rdb / "refs.MYD")) == 2
+
+
+def test_orphaned_continuation_blocks_are_reclaimed_as_deleted(library_with_a_chained_record):
+    """The bug this guards: leftover mid/last blocks left as live, unlinked bytes."""
+    rdb, enl, pos_mid, pos_last = library_with_a_chained_record
+
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+
+    data = (rdb / "refs.MYD").read_bytes()
+    blocks, pos = {}, 0
+    while pos < len(data):
+        block = myisam._read_block(data, pos)
+        blocks[pos] = block
+        pos += max(block.span, 1)
+    assert pos == len(data)  # the whole file still walks cleanly to EOF
+
+    # the old middle/last blocks' file offsets must now be deleted blocks,
+    # not live, unreferenced type-11/type-9 blocks
+    assert blocks[pos_mid].deleted
+    assert blocks[pos_last].deleted
+
+
+def test_chained_shrink_survives_the_files_self_verification(library_with_a_chained_record):
+    rdb, enl, _pos_mid, _pos_last = library_with_a_chained_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    writeback.set_column(rdb, enl, {1: "back again"}, column="notes")
+    assert _read(rdb)[1]["notes"] == b"back again"
+
+
+# --------------------------------------------------------------------------
 # refusals
 # --------------------------------------------------------------------------
 
 
 def test_refuses_columns_that_feed_endnote_indexes(library):
     rdb, enl = library
-    for column in ("title", "year", "label"):
+    for column in ("year", "label"):
         with pytest.raises(writeback.WritebackError, match="safe-to-write"):
             writeback.set_column(rdb, enl, {1: "x"}, column=column)
+
+
+def test_writes_title_and_abstract(library):
+    """Verified last, via a byte-level read of the real refs.MYI key roots."""
+    rdb, enl = library
+    writeback.set_fields(
+        rdb,
+        enl,
+        {1: {"title": "A corrected title", "abstract": "A corrected abstract."}},
+    )
+    row = _read(rdb)[1]
+    assert row["title"] == b"A corrected title"
+    assert row["abstract"] == b"A corrected abstract."
 
 
 def test_writes_author_journal_keywords_and_notes(library):
@@ -274,7 +468,7 @@ def test_set_fields_clearing_one_of_several_columns(library):
 def test_set_fields_refuses_any_column_outside_the_safe_list(library):
     rdb, enl = library
     with pytest.raises(writeback.WritebackError, match="safe-to-write"):
-        writeback.set_fields(rdb, enl, {1: {"volume": "9", "title": "New Title"}})
+        writeback.set_fields(rdb, enl, {1: {"volume": "9", "year": "2030"}})
 
 
 def test_set_fields_refuses_unknown_record_numbers(library):
@@ -287,7 +481,7 @@ def test_set_fields_refusal_leaves_files_untouched(library):
     rdb, enl = library
     before = (rdb / "refs.MYD").read_bytes()
     with pytest.raises(writeback.WritebackError):
-        writeback.set_fields(rdb, enl, {1: {"volume": "9", "title": "New Title"}})
+        writeback.set_fields(rdb, enl, {1: {"volume": "9", "year": "2030"}})
     assert (rdb / "refs.MYD").read_bytes() == before
 
 

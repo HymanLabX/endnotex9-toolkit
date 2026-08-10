@@ -16,11 +16,23 @@ For ordinary bugs, open a public issue with a synthetic reproducer and redacted 
 
 Almost the entire public MCP surface reads EndNote source files and prepares writeback previews;
 it does not commit. Two tools are the narrow exception: `update_reference_fields` (volume, issue,
-pages, article number, number of volumes, journal, notes, the author list, the keyword list) and
-`mark_references` (a marker string into Custom 2–7, for building an EndNote Smart Group — never a
-delete). Neither can touch any other column, and neither can delete a record; `custom_1` stays
-reserved for the classification writeback preview above, which still has no commit path of its
-own.
+pages, article number, number of volumes, journal, notes, title, abstract, the author list, the
+keyword list) and `mark_references` (a marker string into Custom 2–7, for building an EndNote
+Smart Group — never a delete). Neither can touch any other column, and neither can delete a
+record; `custom_1` stays reserved for the classification writeback preview above, which still has
+no commit path of its own.
+
+`year` cannot be written through either tool, on purpose: it is one of only two MyISAM keys on
+`refs` (`id` is the other), so changing it means removing and reinserting a B-tree key rather than
+editing bytes in place — the trick every other writable column relies on does not apply. A 2026-08
+read-only spike against the real `refs.MYI` confirmed the shape of the problem: the file is
+exactly 19 x 1024-byte pages, both key roots were located directly (page 1 for `id`, page 13 for
+`yearIndex` — confirmed by finding the literal text `"2017"` inside it), and all 19 pages are
+accounted for between the two trees. What the spike did *not* reach — the page-internal entry
+format and the insert/delete/rebalance algorithm — is the actual hard part, and is unsolved.
+Treat `year`, and record deletion generally (which needs the same B-tree surgery, plus free-list
+and term-list bookkeeping this package has never implemented), as a separate, larger project, not
+something to bolt onto the current allowlist.
 
 `author`/`secondary_title` (journal)/`keywords` back three of EndNote's own term lists
 (`terms.MYD`/`jterms.MYD`), which made them the one part of this allowlist that could not be
@@ -34,7 +46,10 @@ not a corruption path, and this package never opens `terms.MYD`/`jterms.MYD` at 
 `refs.MYD`/`refs.MYI`/`.enl`. The matching sort-cache question (`misc.DbSortedRecList`/`csort`)
 was also checked empirically rather than assumed: the real library's `DbSortedRecList` was found
 already stale by roughly 160 records from an earlier round of manual deletions in EndNote, with no
-ill effect on later normal use. See `writeback.py`'s module docstring for the full record of this.
+ill effect on later normal use. `title` and `abstract` were added last; `abstract` is not on
+EndNote's sort menu at all, and `title` is the one entry on that menu this allowlist covers, so it
+got the same key-root read described above rather than reuse of the author/journal reasoning. See
+`writeback.py`'s module docstring for the full record of this.
 
 Both write tools default to `dry_run=True` (diff only, nothing written) and, on a real commit,
 always back up the whole library to a fresh timestamped folder before touching anything — see
