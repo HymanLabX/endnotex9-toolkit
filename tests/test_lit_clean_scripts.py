@@ -381,20 +381,6 @@ def test_a_second_run_does_not_re_flag_its_own_quarantine(tmp_path: Path):
     assert files_script.find_orphaned_pdfs(rows, pdf_dir)[0] == []
 
 
-def test_the_pre_rename_quarantine_folder_is_still_skipped(tmp_path: Path):
-    """A library quarantined while this skill was called ref-clean has files
-    sitting in `_ref_clean_orphans` awaiting the user's review. Forgetting
-    the old name would move them a second time, into the new folder,
-    unannounced."""
-    pdf_dir = tmp_path / "PDF"
-    legacy = pdf_dir / "_ref_clean_orphans"
-    legacy.mkdir(parents=True)
-    (legacy / "already-quarantined.pdf").write_bytes(b"junk")
-
-    assert "_ref_clean_orphans" in files_script.QUARANTINE_DIRNAMES
-    assert files_script.find_orphaned_pdfs({}, pdf_dir)[0] == []
-
-
 def test_backups_beyond_the_recency_count_and_age_are_prunable(tmp_path: Path):
     library = tmp_path / "Lib.enl"
     library.write_bytes(b"")
