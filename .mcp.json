@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "endnotex9": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "--extra",
+        "pdf",
+        "endnotex9-mcp",
+        "serve"
+      ]
+    }
+  }
+}

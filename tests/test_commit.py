@@ -52,6 +52,10 @@ def library(tmp_path: Path) -> tuple[Path, Path]:
     struct.pack_into(">H", myi, 4, myisam.HA_OPTION_PACK_RECORD)
     struct.pack_into(">Q", myi, writeback._MYI_SPLIT, len(rows))
     struct.pack_into(">Q", myi, writeback._MYI_DATA_FILE_LENGTH, len(myd))
+    # No deleted blocks yet, so the free chain is empty — which MyISAM
+    # spells with the end-of-chain sentinel, never zero (offset 0 is the
+    # file's first block, a live record).
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, writeback._FREE_LIST_END)
     (rdb / "refs.MYI").write_bytes(bytes(myi))
     (rdb / "refs.frm").write_bytes(b"fake frm")
 
@@ -64,7 +68,8 @@ def library(tmp_path: Path) -> tuple[Path, Path]:
 
 def _read(rdb: Path) -> dict:
     return {
-        writeback.decode_row(r)["id"]: writeback.decode_row(r) for r in myisam.read_records(rdb / "refs.MYD")
+        writeback.decode_row(r)["id"]: writeback.decode_row(r)
+        for r in myisam.read_records(rdb / "refs.MYD")
     }
 
 
@@ -114,13 +119,15 @@ def test_a_field_already_matching_is_reported_but_not_written(library):
     result = commit.update_reference_fields(rdb, enl, {2: {"volume": "14"}}, dry_run=False)
     assert result["records_written"] == 0
     assert result["backup_path"] is None
-    assert result["diffs"] == [{"rec_number": 2, "field": "volume", "old_value": "14", "new_value": "14"}]
+    assert result["diffs"] == [
+        {"rec_number": 2, "field": "volume", "old_value": "14", "new_value": "14"}
+    ]
 
 
 def test_refuses_non_writable_fields(library):
     rdb, enl = library
     with pytest.raises(commit.CommitError, match="not fields this tool may write"):
-        commit.update_reference_fields(rdb, enl, {1: {"title": "New Title"}}, dry_run=True)
+        commit.update_reference_fields(rdb, enl, {1: {"year": "2030"}}, dry_run=True)
 
 
 def test_refuses_unknown_record_numbers(library):
@@ -158,6 +165,20 @@ def test_journal_and_notes_are_plain_text_fields(library):
     row = _read(rdb)[1]
     assert row["secondary_title"] == b"Journal of Physical Chemistry Letters"
     assert "notes" not in row
+
+
+def test_title_and_abstract_are_plain_text_fields(library):
+    rdb, enl = library
+    result = commit.update_reference_fields(
+        rdb,
+        enl,
+        {1: {"title": "A corrected title", "abstract": "A corrected abstract."}},
+        dry_run=False,
+    )
+    assert result["records_written"] == 1
+    row = _read(rdb)[1]
+    assert row["title"] == b"A corrected title"
+    assert row["abstract"] == b"A corrected abstract."
 
 
 def test_author_and_keywords_are_list_fields(library):
@@ -207,7 +228,9 @@ def test_list_field_strips_blanks_and_a_no_op_write_is_not_backed_up(library):
         "dry_run": False,
         "records_written": 0,
         "backup_path": None,
-        "diffs": [{"rec_number": 1, "field": "author", "old_value": ["Li, D."], "new_value": ["Li, D."]}],
+        "diffs": [
+            {"rec_number": 1, "field": "author", "old_value": ["Li, D."], "new_value": ["Li, D."]}
+        ],
     }
 
 
@@ -250,7 +273,9 @@ def test_mark_refuses_to_clobber_existing_different_text(library):
 def test_mark_force_overwrites_existing_text(library):
     rdb, enl = library
     commit.mark_records(rdb, enl, [1], "first", column="custom_7", dry_run=False)
-    result = commit.mark_records(rdb, enl, [1], "second", column="custom_7", force=True, dry_run=False)
+    result = commit.mark_records(
+        rdb, enl, [1], "second", column="custom_7", force=True, dry_run=False
+    )
     assert result["records_written"] == 1
     assert _read(rdb)[1]["custom_7"] == b"second"
 
@@ -259,4 +284,9 @@ def test_mark_is_idempotent_for_already_marked_records(library):
     rdb, enl = library
     commit.mark_records(rdb, enl, [1], "DELETE_CANDIDATE", dry_run=False)
     result = commit.mark_records(rdb, enl, [1], "DELETE_CANDIDATE", dry_run=False)
-    assert result == {"dry_run": False, "records_written": 0, "backup_path": None, "column": "custom_7"}
+    assert result == {
+        "dry_run": False,
+        "records_written": 0,
+        "backup_path": None,
+        "column": "custom_7",
+    }

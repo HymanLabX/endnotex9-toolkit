@@ -33,9 +33,14 @@ MCP stdio 的客户端可以通过它检索文献、读取现有分组、设计�
 带文件指纹的只读预览，`custom_1`（主题分类字段）没有提交通道。
 
 有两个工具真正会写入文献库：`update_reference_fields`（卷号、期号、页码、文章编号、
-卷数、期刊、Notes、作者列表、关键词列表）和 `mark_references`（往 Custom 2–7 写入
-标记文本，用来配合 EndNote 智能分组做批量筛选——本项目本身从不删除任何条目）。两者
-共享同一套保护机制：
+卷数、期刊、Notes、标题、摘要、作者列表、关键词列表）和 `mark_references`（往 Custom
+2–7 写入标记文本，用来配合 EndNote 智能分组做批量筛选——本项目本身从不删除任何条目）。
+`year`（年份）完全不可写——它是文献库仅有的两个 MyISAM 索引键之一，改索引值意味着要在
+B-tree 里删旧键插新键，不是简单地原地改字节。2026年8月做过一次只读的探路实验，直接在
+真实 `refs.MYI` 上定位到了两棵键树的根页（page 1 对应 `id`，page 13 对应 `yearIndex`，
+在里面找到了字面的 "2017" 文本确认无误），19个索引页两棵树全部对上，没有多余页面——但
+页内部的具体格式和插入/删除/再平衡算法没有解出来，这块没做通，年份和真正的删除功能一样，
+算独立的后续项目，不在这次的能力范围内。两者共享同一套保护机制：
 
 - 可写字段列表是机械验证过的，不只是策略约定：`writeback.WRITABLE_COLUMNS` 只收录
   已确认不在任何 `.MYI` 索引键或排序缓存（`csort`/`misc.DbSortedRecList`）范围内的
@@ -77,7 +82,80 @@ MCP 客户端暴露，只有 `commit.py` 里这两个字段范围受限的封装
 `author`/`journal`/`keywords`后如果在意自动补全是否同步，记得在 EndNote 里手动跑一次
 Update List——本工具不会替你更新词表。
 
+## 作为插件安装（Claude Code 或 Codex）
+
+本仓库同时是一个 agent 插件：一个 MCP server 加五个技能。两个 agent 都以此为最短路径，
+只需要 PATH 上有 [uv](https://docs.astral.sh/uv/) —— 插件用 `uv run --directory <插件目录>` 启动
+server，首次运行会自建环境，不需要自己 `pip install`。
+
+Claude Code：
+
+```text
+/plugin marketplace add HymanLabX/endnotex9-mcp
+/plugin install endnotex9@endnotex9
+```
+
+Codex：
+
+```bash
+codex plugin marketplace add HymanLabX/endnotex9-mcp
+codex plugin add endnotex9@endnotex9
+```
+
+两者读的是同一棵树。Claude Code 取 `.claude-plugin/plugin.json`；Codex 优先取
+`.codex-plugin/plugin.json`，取不到时回退到前者。两者展开的都是同一个
+`${CLAUDE_PLUGIN_ROOT}`，所以一份 [`.mcp.json`](../.mcp.json) 同时服务两边。两份清单由
+`tests/test_plugin_manifests.py` 保证不漂移。
+
+**Codex 独有的一个坑：沙箱。** Codex 默认的 `workspace-write` 策略只允许写工作目录、并且禁网，
+而你的 EndNote 库几乎一定在工作目录之外。只读没问题，但 `lit-cleaner` 的 CrossRef 查询需要网络，
+任何 `--commit`（以及所有 `update_reference_fields`/`mark_references` 写入）需要库所在目录可写。
+按需放开即可，不必直接上 `danger-full-access`：
+
+```toml
+# ~/.codex/config.toml
+[sandbox_workspace_write]
+network_access = true
+writable_roots = ["D:\\Research"]   # 存放 .enl 及其 .Data 目录的文件夹
+```
+
+这不改变 server 自身的任何保证：写入仍然默认 dry run、仍然先整库备份、
+仍然拒绝在 EndNote 打开库时运行。
+
+随后执行一次初始化，让 server 知道要读哪个文献库：
+
+```bash
+uv run --directory <插件目录> endnotex9-mcp setup
+```
+
+`/plugin` 与 `codex plugin list` 都会显示插件的安装目录；如果直接使用源码检出，把检出根目录当作
+插件目录，并把 marketplace 指向 `.`（`/plugin marketplace add .`、`codex plugin marketplace add .`）。
+
+插件自带五个技能。Claude Code 中作为斜杠命令调用，Codex 中列为 `endnotex9:<名称>`：
+
+| 技能 | 作用 |
+|---|---|
+| `/lit-cleaner` | 补全或纠正元数据、合并重复条目、清理孤儿 PDF 与旧备份。 |
+| `/lit-downloader` | 为选中的记录下载、校验并原生附加全文 PDF（仅 Windows）。 |
+| `/lit-classifier` | 画像、提出分类体系、编写受限规则、抽样审计，并生成 `Custom 1` 只读回写预览。 |
+| `/lit-deep-reader` | 基于附件 PDF 按 triage/standard/deep 三档精读单篇文献，对照全文核验其结论，可选择把笔记写回该记录的 Notes 字段。 |
+| `/lit-review-writer` | 针对库中的一个切片——某个分组、某个研究方向、某个课题组或某位研究者——撰写综述：每条论断都带上其来源记录号，并随文交付覆盖清单。 |
+
+`lit-review-writer` 面对的是一个封闭语料：先把解析出的记录冻结成 `corpus.json`，按约定深度阅读，
+再由 `cite_audit.py` 拒绝任何引用了该文件之外记录的草稿。它能看见的是这份收藏，而不是整个领域，
+这一点也会写进综述本身。
+
+`lit-deep-reader` 本身不写库：`notes_block.py` 只负责把本次笔记并入 Notes 字段中已有的内容，
+并打印 `update_reference_fields` 的调用参数，真正的写入仍要经过该工具的「先 dry-run 再确认」这道闸。
+
+`lit-downloader` 仅支持 Windows，依赖 `lit-downloader` 这个 extra（Playwright、PyMuPDF、
+pywinauto），具体命令见其 SKILL.md；它驱动机器上已安装的 Microsoft Edge（`channel="msedge"`），
+Playwright 不需要另外下载浏览器。
+
 ## 安装
+
+面向 Claude Desktop 及其它 MCP 客户端（以及宁可手工注册 server 而不装插件的 Codex 用户），
+直接安装 Python 包：
 
 ```bash
 python -m venv .venv
@@ -103,6 +181,8 @@ endnotex9-mcp doctor --json
 返回非零退出码，`--json` 输出适合脚本处理。
 
 ## 连接 Codex
+
+装插件时 server 已自动注册，`codex mcp list` 即可看到。若想手工注册：
 
 ```bash
 codex mcp add endnotex9 -- endnotex9-mcp serve
@@ -196,8 +276,9 @@ python -m build
 - EndNote 分组目前只读；`mark_references` 只写入 Custom 字段标记供用户自建智能分组，
   不会自动创建或编辑分组。
 - 写入能力仅限 `update_reference_fields` 允许清单里的字段（卷号、期号、页码、文章
-  编号、卷数、期刊、Notes、作者、关键词）和 Custom 2–7；`custom_1` 没有提交通道，
-  标题、年份等清单之外的任何字段都不可写，且完全不提供删除条目的能力。
+  编号、卷数、期刊、Notes、标题、摘要、作者、关键词）和 Custom 2–7；`custom_1` 没有
+  提交通道，`year`（年份）因为是 MyISAM 索引键，需要真正的 B-tree 写入能力才能改，
+  这次没做通，清单之外的任何字段都不可写，且完全不提供删除条目的能力。
 - 写入 `author`/`journal`/`keywords` 不会同步更新 EndNote 的作者/期刊/关键词词表；
   如果在意自动补全里的旧词条，需要自己在 EndNote 里跑一次 Update List。
 - 引用格式目前限于 APA 7th 和 GB/T 7714-2015。

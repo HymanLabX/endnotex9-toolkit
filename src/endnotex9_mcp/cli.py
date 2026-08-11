@@ -16,6 +16,7 @@ from .config import (
     config_path,
     default_library_path,
     default_pdf_dir,
+    detect_open_library,
     load_config,
     save_config,
 )
@@ -395,10 +396,13 @@ def cmd_status(_args: argparse.Namespace) -> None:
     config = load_config()
     conn = db.connect(config.db_path)
     stats = browse.library_stats(conn, top=5)
+    open_library = detect_open_library()
+    auto_detected = bool(open_library) and open_library == config.library_path
     print(f"config     : {config_path()}")
     print(
         f"library    : {config.library_path or '(not set)'}"
         f"  {'<- primary source' if sources.library_rdb(config.library_path) else ''}"
+        f"{' (auto-detected: currently open in EndNote)' if auto_detected else ''}"
     )
     print(f"XML export : {config.endnote_xml}  <- fallback / cross-check")
     print(f"PDF folder : {config.pdf_dir or '(not set)'}")

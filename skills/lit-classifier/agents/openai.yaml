@@ -1,0 +1,4 @@
+interface:
+  display_name: "EndNote Topic Classifier"
+  short_description: "Build and audit a topic taxonomy over the library"
+  default_prompt: "Use $lit-classifier to profile my EndNote library and propose a topic taxonomy for me to approve."

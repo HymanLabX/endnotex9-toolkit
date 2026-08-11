@@ -4,6 +4,9 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+# Written by `uv run`, which is how the plugin launches the server. Left
+# uncommitted so a library release does not pin its dependents' resolution.
+/uv.lock
 
 # Build, test, lint, and coverage output
 build/
@@ -42,8 +45,9 @@ coverage.xml
 /_writeback-test/
 *.BACKUP-*/
 
-# Machine-specific MCP/agent configuration and project notes
-/.mcp.json
+# Machine-specific agent configuration and project notes.
+# `/.mcp.json` is deliberately NOT ignored: it is the plugin's server manifest
+# (see .claude-plugin/plugin.json) and has to ship with the repository.
 /.codex/
 /CLAUDE.md
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "EndNote Deep Reader"
+  short_description: "Close-read one paper from its attached full text"
+  default_prompt: "Use $lit-deep-reader to read the paper I have selected in EndNote and check its key claims."

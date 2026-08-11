@@ -5,14 +5,22 @@ indexed, not tied back to a term list, not a sort key). This module adds the
 *policy* half on top, for three purposes:
 
 * filling in or correcting ordinary text fields — bibliographic fields like
-  volume/issue/pages, the journal name, and notes — that import left blank
-  or wrong;
+  volume/issue/pages, the journal name, notes, the title, and the abstract
+  — that import left blank or wrong;
 * correcting the author list and keyword list, the two fields that back
   EndNote's own Authors/Keywords term lists, verified safe by reading
   `terms.MYD` directly (see `writeback.py`'s module docstring for the
   byte-level read that established this);
 * tagging records with a marker so the user can build an EndNote Smart
   Group and delete the matches themselves, inside EndNote.
+
+`year` is deliberately absent: it is one of only two MyISAM keys on `refs`
+(`writeback.py`'s docstring), so writing it needs real B-tree surgery this
+package does not implement — a 2026-08 spike against the real `refs.MYI`
+confirmed the key layout (two roots, one page each, accounting for all 19
+index pages) but stopped short of the page-internal format and the
+insert/delete/rebalance algorithm needed to touch it safely. Treat `year`,
+and record deletion generally, as a separate, larger project.
 
 Nothing here ever deletes a record or touches `custom_1`, which
 `classification.py`/`writeplan.py` already own. Every write is backed up
@@ -40,6 +48,8 @@ TEXT_FIELDS = {
     "number_of_volumes": "number_of_volumes",
     "journal": "secondary_title",
     "notes": "notes",
+    "title": "title",
+    "abstract": "abstract",
 }
 
 # Same idea for fields EndNote stores as several values joined by
@@ -52,9 +62,7 @@ LIST_FIELDS = {
 
 # custom_1 is reserved for this server's own topic classification
 # (classification.py / writeplan.py); marking must not collide with it.
-MARKER_COLUMNS = frozenset(
-    {"custom_2", "custom_3", "custom_4", "custom_5", "custom_6", "custom_7"}
-)
+MARKER_COLUMNS = frozenset({"custom_2", "custom_3", "custom_4", "custom_5", "custom_6", "custom_7"})
 
 
 class CommitError(RuntimeError):
@@ -78,7 +86,10 @@ def _current_rows(rdb_dir: str | Path, rec_numbers, columns) -> dict[int, dict]:
     missing = sorted(wanted - set(rows))
     if missing:
         raise CommitError(f"no such records: {missing[:10]}")
-    return {rec_number: {column: row.get(column) for column in columns} for rec_number, row in rows.items()}
+    return {
+        rec_number: {column: row.get(column) for column in columns}
+        for rec_number, row in rows.items()
+    }
 
 
 def update_reference_fields(
@@ -128,7 +139,12 @@ def update_reference_fields(
                 old_value = _decode(before[rec_number][column])
                 new_clean = str(new_value)
             diffs.append(
-                {"rec_number": rec_number, "field": field, "old_value": old_value, "new_value": new_clean}
+                {
+                    "rec_number": rec_number,
+                    "field": field,
+                    "old_value": old_value,
+                    "new_value": new_clean,
+                }
             )
     changed = [d for d in diffs if d["old_value"] != d["new_value"]]
 
@@ -190,7 +206,9 @@ def mark_records(
         raise CommitError("rec_numbers must contain at least one record")
 
     unique = sorted(set(rec_numbers))
-    before = {rec: _decode(row[column]) for rec, row in _current_rows(rdb_dir, unique, {column}).items()}
+    before = {
+        rec: _decode(row[column]) for rec, row in _current_rows(rdb_dir, unique, {column}).items()
+    }
     conflicts = {rec: before[rec] for rec in unique if before[rec] and before[rec] != marker}
     if conflicts and not force:
         raise CommitError(
@@ -211,7 +229,9 @@ def mark_records(
         return {"dry_run": False, "records_written": 0, "backup_path": None, "column": column}
 
     backup_path = writeback.backup_library(rdb_dir, enl_path)
-    result = writeback.set_column(rdb_dir, enl_path, {rec: marker for rec in to_write}, column=column)
+    result = writeback.set_column(
+        rdb_dir, enl_path, {rec: marker for rec in to_write}, column=column
+    )
 
     return {
         "dry_run": False,
