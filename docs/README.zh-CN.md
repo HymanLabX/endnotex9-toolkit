@@ -84,7 +84,7 @@ Update List——本工具不会替你更新词表。
 
 ## 作为插件安装（Claude Code 或 Codex）
 
-本仓库同时是一个 agent 插件：一个 MCP server 加四个技能。两个 agent 都以此为最短路径，
+本仓库同时是一个 agent 插件：一个 MCP server 加五个技能。两个 agent 都以此为最短路径，
 只需要 PATH 上有 [uv](https://docs.astral.sh/uv/) —— 插件用 `uv run --directory <插件目录>` 启动
 server，首次运行会自建环境，不需要自己 `pip install`。
 
@@ -131,7 +131,7 @@ uv run --directory <插件目录> endnotex9-mcp setup
 `/plugin` 与 `codex plugin list` 都会显示插件的安装目录；如果直接使用源码检出，把检出根目录当作
 插件目录，并把 marketplace 指向 `.`（`/plugin marketplace add .`、`codex plugin marketplace add .`）。
 
-插件自带四个技能。Claude Code 中作为斜杠命令调用，Codex 中列为 `endnotex9:<名称>`：
+插件自带五个技能。Claude Code 中作为斜杠命令调用，Codex 中列为 `endnotex9:<名称>`：
 
 | 技能 | 作用 |
 |---|---|
@@ -139,6 +139,11 @@ uv run --directory <插件目录> endnotex9-mcp setup
 | `/lit-downloader` | 为选中的记录下载、校验并原生附加全文 PDF（仅 Windows）。 |
 | `/lit-classifier` | 画像、提出分类体系、编写受限规则、抽样审计，并生成 `Custom 1` 只读回写预览。 |
 | `/lit-deep-reader` | 基于附件 PDF 按 triage/standard/deep 三档精读单篇文献，对照全文核验其结论，可选择把笔记写回该记录的 Notes 字段。 |
+| `/lit-review-writer` | 针对库中的一个切片——某个分组、某个研究方向、某个课题组或某位研究者——撰写综述：每条论断都带上其来源记录号，并随文交付覆盖清单。 |
+
+`lit-review-writer` 面对的是一个封闭语料：先把解析出的记录冻结成 `corpus.json`，按约定深度阅读，
+再由 `cite_audit.py` 拒绝任何引用了该文件之外记录的草稿。它能看见的是这份收藏，而不是整个领域，
+这一点也会写进综述本身。
 
 `lit-deep-reader` 本身不写库：`notes_block.py` 只负责把本次笔记并入 Notes 字段中已有的内容，
 并打印 `update_reference_fields` 的调用参数，真正的写入仍要经过该工具的「先 dry-run 再确认」这道闸。

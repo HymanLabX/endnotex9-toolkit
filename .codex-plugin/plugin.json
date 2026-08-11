@@ -1,7 +1,7 @@
 {
   "name": "endnotex9",
   "version": "0.1.0",
-  "description": "Local-first EndNote X9 assistant: an MCP server that reads, searches, cites and narrowly corrects an .enl library without uploading it, plus skills for cleaning metadata, downloading full text, classifying the library, and close-reading a single paper.",
+  "description": "Local-first EndNote X9 assistant: an MCP server that reads, searches, cites and narrowly corrects an .enl library without uploading it, plus skills for cleaning metadata, downloading full text, classifying the library, close-reading a single paper, and writing a cited review over one group, lab or researcher.",
   "author": {
     "name": "HymanLab",
     "url": "https://github.com/HymanLabX"
@@ -24,7 +24,7 @@
   "interface": {
     "displayName": "EndNote X9",
     "shortDescription": "Search, cite, and tidy a local EndNote X9 library",
-    "longDescription": "Read, search, and cite an EndNote X9 library without uploading it, and drive four skills over it: clean up metadata and duplicates, download and attach full-text PDFs, build a reviewable topic classification, and close-read a single paper. Every write is backed up first, defaults to a dry run, and refuses to run while EndNote holds the library open.",
+    "longDescription": "Read, search, and cite an EndNote X9 library without uploading it, and drive five skills over it: clean up metadata and duplicates, download and attach full-text PDFs, build a reviewable topic classification, close-read a single paper, and write a literature review over one group, lab or researcher in which every claim carries the record it came from. Every write is backed up first, defaults to a dry run, and refuses to run while EndNote holds the library open.",
     "developerName": "HymanLab",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],

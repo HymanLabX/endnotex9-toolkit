@@ -1,0 +1,4 @@
+interface:
+  display_name: "EndNote Review Writer"
+  short_description: "Write a review over one group, lab or researcher"
+  default_prompt: "Use $lit-review-writer to write a review of the papers in my \"Elastocaloric\" EndNote group."

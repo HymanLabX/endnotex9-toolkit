@@ -105,7 +105,7 @@ cross-check, and for learning EndNote reference-type names.
 
 ## Install as a plugin (Claude Code or Codex)
 
-The repository is also an agent plugin: the MCP server plus four skills that drive it. This is the
+The repository is also an agent plugin: the MCP server plus five skills that drive it. This is the
 shortest path for either agent, and it needs [uv](https://docs.astral.sh/uv/) on the PATH — the
 plugin launches the server with `uv run --directory <plugin>`, which builds its own environment on
 first use, so there is nothing to `pip install` yourself.
@@ -156,7 +156,7 @@ uv run --directory <plugin-dir> endnotex9-mcp setup
 the checkout root instead and point the marketplace at `.` (`/plugin marketplace add .`,
 `codex plugin marketplace add .`).
 
-The plugin ships four skills. Claude Code exposes them as slash commands; Codex lists them as
+The plugin ships five skills. Claude Code exposes them as slash commands; Codex lists them as
 `endnotex9:<name>`:
 
 | Skill | What it does |
@@ -165,6 +165,12 @@ The plugin ships four skills. Claude Code exposes them as slash commands; Codex 
 | `/lit-downloader` | Download, verify, and natively attach full-text PDFs to selected records (Windows). |
 | `/lit-classifier` | Profile, propose a taxonomy, write bounded rules, audit, and preview the `Custom 1` writeback. |
 | `/lit-deep-reader` | Close-read one paper from its attached PDF at triage/standard/deep depth, verify its claims against the full text, and optionally save a note into its Notes field. |
+| `/lit-review-writer` | Write a review over one slice of the library — a group, a research direction, a lab, or one researcher — with every claim carrying the record it came from, and a coverage ledger beside it. |
+
+`lit-review-writer` reviews a closed corpus: it freezes the resolved records into a `corpus.json`,
+reads them at an agreed depth, and its `cite_audit.py` refuses any draft citing a record outside
+that file. What it can see is the collection, not the field, and it says so in the review it
+writes.
 
 `lit-deep-reader` writes nothing by itself: its `notes_block.py` merges the reading note into
 whatever the Notes field already holds and prints the `update_reference_fields` payload, so the
