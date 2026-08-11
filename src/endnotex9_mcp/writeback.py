@@ -446,8 +446,7 @@ def _verify_free_space(new_data: bytes, myi: bytes, where: str) -> None:
     count = struct.unpack_from(">Q", myi, _MYI_DEL)[0]
     if count != len(deleted):
         raise WritebackError(
-            f"{where}: the index counts {count} deleted blocks, the data file holds "
-            f"{len(deleted)}"
+            f"{where}: the index counts {count} deleted blocks, the data file holds {len(deleted)}"
         )
     empty = struct.unpack_from(">Q", myi, _MYI_EMPTY)[0]
     total = sum(b.span for b in deleted)
@@ -531,7 +530,9 @@ def set_fields(
     column is outside `WRITABLE_COLUMNS` or the result would not read back
     exactly as intended.
     """
-    bad_columns = sorted({column for fields in updates.values() for column in fields} - WRITABLE_COLUMNS)
+    bad_columns = sorted(
+        {column for fields in updates.values() for column in fields} - WRITABLE_COLUMNS
+    )
     if bad_columns:
         raise WritebackError(
             f"{bad_columns} not on the safe-to-write list "

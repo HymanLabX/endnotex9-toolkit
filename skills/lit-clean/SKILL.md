@@ -22,6 +22,28 @@ same way the MCP server does, so there is nothing to configure separately):
 3. **files** — orphaned PDF attachments (files in the PDF folder no record references) and this
    tool's own accumulated `backups/` folders. Pure filesystem operations, no MyISAM writes at all.
 
+## Running the scripts
+
+This skill ships inside the `endnotex9` plugin, whose root also holds the `endnotex9-mcp`
+package. Run every script through that environment so it sees the same dependencies as the MCP
+server itself:
+
+```powershell
+uv run --directory "$env:CLAUDE_PLUGIN_ROOT" python "$env:CLAUDE_PLUGIN_ROOT/skills/lit-clean/scripts/metadata.py"
+```
+
+Use the shell's own syntax for that variable: `$env:CLAUDE_PLUGIN_ROOT` in PowerShell, as above,
+and `${CLAUDE_PLUGIN_ROOT}` in bash. PowerShell reads `${CLAUDE_PLUGIN_ROOT}` as a *shell*
+variable, not an environment one, and silently substitutes an empty string — which turns the
+command into `uv run --directory ""` and fails somewhere unhelpful.
+
+Below, `metadata.py`, `dedup.py` and `files.py` are shorthand for exactly that command shape with
+the script name swapped; `scripts/out/*.json` means
+`<plugin-root>/skills/lit-clean/scripts/out/*.json`, which the Read tool needs spelled out in
+full. If `CLAUDE_PLUGIN_ROOT` is unset — you are working in an endnotex9-mcp checkout rather
+than through the installed plugin — substitute the checkout root; the scripts locate the package
+by walking up from their own path, so both layouts work.
+
 ## Before anything else
 
 Read `scripts/common.py`, `scripts/metadata.py`, `scripts/dedup.py`, and `scripts/files.py` if you
@@ -57,7 +79,7 @@ Parse the skill's `args` loosely, not as a strict CLI:
 
 ## Metadata flow
 
-1. `python scripts/metadata.py` (no `--commit`). This can take a few minutes on a first run — it
+1. `metadata.py` (no `--commit`). This can take a few minutes on a first run — it
    queries CrossRef once per unique DOI that needs it, at 8-way concurrency; the script prints
    progress every 50 lookups. Tell the user this before running it if the library is large.
 2. Read `scripts/out/metadata_dry_run.json` and `scripts/out/metadata_review.json`. Summarize for
@@ -67,7 +89,7 @@ Parse the skill's `args` loosely, not as a strict CLI:
    this flow will touch.
 3. Unless trust mode: show a handful of sample diffs (3-5, varied across fix types) and wait for
    explicit confirmation before proceeding.
-4. `python scripts/metadata.py --commit`. Report `records_written` and `backup_path` back to the
+4. `metadata.py --commit`. Report `records_written` and `backup_path` back to the
    user. If the run raises the "open by another process" error, tell the user plainly and stop —
    do not retry silently more than once.
 5. Suggest `rebuild_index` (the MCP tool) afterward so subsequent reads in the same session see
@@ -75,7 +97,7 @@ Parse the skill's `args` loosely, not as a strict CLI:
 
 ## Dedup flow
 
-1. `python scripts/dedup.py` (no `--commit`).
+1. `dedup.py` (no `--commit`).
 2. Read `scripts/out/dedup_resolved.json`, `dedup_needs_review.json`, and `dedup_merge_updates.json`.
    Summarize: how many duplicate groups, how many auto-resolved vs. need review, how many keep-side
    records gain merged fields (and roughly what kinds — don't dump every field), and the exact
@@ -84,7 +106,7 @@ Parse the skill's `args` loosely, not as a strict CLI:
 3. Unless trust mode: show the counts and 2-3 example resolved groups (rec numbers, titles if you
    want to fetch them via `get_reference_details`, keep/delete decision, what would be merged), and
    wait for explicit confirmation.
-4. `python scripts/dedup.py --commit`. This merges first, then tags — report both `records_written`
+4. `dedup.py --commit`. This merges first, then tags — report both `records_written`
    counts and the `backup_path` values.
 5. Tell the user exactly what to do next in EndNote: build a Smart Group with the condition
    `<column> contains <marker>` (defaults `custom_7` / `LIT_CLEAN_DUPLICATE`, both scripted flags
@@ -93,15 +115,18 @@ Parse the skill's `args` loosely, not as a strict CLI:
 
 ## Files flow
 
-1. `python scripts/files.py` (no `--commit`).
+1. `files.py` (no `--commit`).
 2. Read `scripts/out/files_report.json`. Summarize: orphaned PDF count and total size, prunable
    backup count and total size (defaults: keep the 5 most recent backups, and anything newer than
    14 days regardless of count — mention if the user wants different thresholds via
    `--keep-backups`/`--backup-age-days`).
 3. Unless trust mode: show the counts (not necessarily every path) and wait for confirmation.
-4. `python scripts/files.py --commit`. Orphaned PDFs are *moved* to `<pdf_dir>/_lit_clean_orphans/`
+4. `files.py --commit`. Orphaned PDFs are *moved* to `<pdf_dir>/_lit_clean_orphans/`
    (reversible — tell the user where, so they can delete that folder themselves once they've
-   checked it), not deleted outright. Excess backups are deleted for real, since a backup existing
+   checked it), not deleted outright. Each one keeps its EndNote subfolder inside the quarantine
+   (`_lit_clean_orphans/2923055561/paper.pdf`), so same-named attachments from different records
+   cannot land on each other; anything whose destination is already occupied is reported and left
+   in place. Excess backups are deleted for real, since a backup existing
    only to be deleted by the very next backup isn't protecting anything — but only the ones that
    were both beyond the recency count and past the age threshold, which the report already showed.
 

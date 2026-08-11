@@ -31,6 +31,7 @@ _MARK = "**"
 _ELLIPSIS = "…"
 _EXCERPT_WIDTH = 220
 
+
 # Fields returned for a hit. Deliberately narrower than the full record:
 # result lists are read by a model with a context budget, and the abstract
 # is what `get_reference_details` is for.

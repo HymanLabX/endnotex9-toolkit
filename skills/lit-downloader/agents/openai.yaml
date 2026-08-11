@@ -1,0 +1,4 @@
+interface:
+  display_name: "EndNote PDF Downloader"
+  short_description: "Verify and attach selected EndNote PDFs in batches"
+  default_prompt: "Use $lit-downloader to download, verify, and attach PDFs for the references selected in EndNote."

@@ -103,7 +103,82 @@ disposable copy of a real library before trusting it against a live one.
 The `.enl` library is the preferred source. An XML export is useful as a fallback, as a format
 cross-check, and for learning EndNote reference-type names.
 
-## Install
+## Install as a plugin (Claude Code or Codex)
+
+The repository is also an agent plugin: the MCP server plus four skills that drive it. This is the
+shortest path for either agent, and it needs [uv](https://docs.astral.sh/uv/) on the PATH — the
+plugin launches the server with `uv run --directory <plugin>`, which builds its own environment on
+first use, so there is nothing to `pip install` yourself.
+
+Claude Code:
+
+```text
+/plugin marketplace add HymanLabX/endnotex9-mcp
+/plugin install endnotex9@endnotex9
+```
+
+Codex:
+
+```bash
+codex plugin marketplace add HymanLabX/endnotex9-mcp
+codex plugin add endnotex9@endnotex9
+```
+
+Both read the same tree. Claude Code takes its manifest from `.claude-plugin/plugin.json`; Codex
+prefers `.codex-plugin/plugin.json` and falls back to the Claude one, and both expand the same
+`${CLAUDE_PLUGIN_ROOT}` in [`.mcp.json`](.mcp.json), so one `.mcp.json` serves both. The two
+manifests are kept in step by `tests/test_plugin_manifests.py`.
+
+**One Codex-specific caveat: the sandbox.** Codex's default `workspace-write` policy confines
+writes to the working directory and blocks network access, and your EndNote library almost
+certainly lives outside that directory. Reading works, but `lit-clean`'s CrossRef lookups need
+the network, and any `--commit` — like every `update_reference_fields`/`mark_references` write —
+needs the library's own directory to be writable. Grant those explicitly rather than reaching for
+`danger-full-access`:
+
+```toml
+# ~/.codex/config.toml
+[sandbox_workspace_write]
+network_access = true
+writable_roots = ["D:\\Research"]   # the folder holding the .enl and its .Data directory
+```
+
+This changes nothing about the server's own guarantees: writes still default to a dry run, still
+back up the whole library first, and still refuse to run while EndNote holds the library open.
+
+Then run the one-time setup so the server knows which library to read:
+
+```bash
+uv run --directory <plugin-dir> endnotex9-mcp setup
+```
+
+`/plugin` and `codex plugin list` both report the installed directory; on a source checkout, use
+the checkout root instead and point the marketplace at `.` (`/plugin marketplace add .`,
+`codex plugin marketplace add .`).
+
+The plugin ships four skills. Claude Code exposes them as slash commands; Codex lists them as
+`endnotex9:<name>`:
+
+| Skill | What it does |
+|---|---|
+| `/lit-clean` | Fill in or correct metadata, merge duplicates, tidy orphaned PDFs and old backups. |
+| `/lit-downloader` | Download, verify, and natively attach full-text PDFs to selected records (Windows). |
+| `/lit-classify` | Profile, propose a taxonomy, write bounded rules, audit, and preview the `Custom 1` writeback. |
+| `/lit-deep-reader` | Close-read one paper from its attached PDF at triage/standard/deep depth, verify its claims against the full text, and optionally save a note into its Notes field. |
+
+`lit-deep-reader` writes nothing by itself: its `notes_block.py` merges the reading note into
+whatever the Notes field already holds and prints the `update_reference_fields` payload, so the
+write still goes through that tool's dry-run-then-confirm gate.
+
+`lit-downloader` is Windows-only and runs from the `lit-downloader` extra (Playwright, PyMuPDF,
+pywinauto); its own SKILL.md gives the `uv run --extra lit-downloader …` form. It drives the
+Microsoft Edge already installed on the machine (`channel="msedge"`), so Playwright has no browser
+to download.
+
+## Install as a plain package
+
+For Claude Desktop and every other MCP client — and for Codex if you would rather register the
+server by hand than install the plugin — install the package directly.
 
 Clone the repository, create a virtual environment, and install the package:
 
@@ -152,6 +227,9 @@ platform, or the library is only ever an XML export). `endnotex9-mcp status` mar
 ## Connect an MCP client
 
 ### Codex
+
+Installing the plugin already registers the server; `codex mcp list` will show it. To register it
+by hand instead:
 
 ```bash
 codex mcp add endnotex9 -- endnotex9-mcp serve

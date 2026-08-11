@@ -1,0 +1,26 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "endnotex9",
+  "description": "The endnotex9 plugin: a local-first MCP server plus reference-management skills for EndNote X9.",
+  "owner": {
+    "name": "HymanLab",
+    "url": "https://github.com/HymanLabX"
+  },
+  "plugins": [
+    {
+      "name": "endnotex9",
+      "source": "./",
+      "version": "0.1.0",
+      "license": "MIT",
+      "category": "productivity",
+      "description": "One MCP server over an EndNote X9 library (search, full text, citations, backup-first field writeback) and four skills: lit-clean, lit-downloader, lit-classify, lit-deep-reader. Requires uv; the library never leaves the machine.",
+      "homepage": "https://github.com/HymanLabX/endnotex9-mcp",
+      "skills": [
+        "./skills/lit-clean",
+        "./skills/lit-downloader",
+        "./skills/lit-classify",
+        "./skills/lit-deep-reader"
+      ]
+    }
+  ]
+}

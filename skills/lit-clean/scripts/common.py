@@ -11,13 +11,36 @@ from __future__ import annotations
 import re
 import sys
 import unicodedata
+from importlib.util import find_spec
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
 
-from endnotex9_mcp import config as configmod
-from endnotex9_mcp import groups, parser, refstable
-from endnotex9_mcp.refstable import VALUE_SEPARATOR
+def package_root() -> Path | None:
+    """The endnotex9-mcp tree these scripts ship inside, or None if detached.
+
+    Do not count parent directories here. The same scripts run from a source
+    checkout and from an installed plugin, where Claude Code has copied the
+    plugin somewhere else entirely, so walk up looking for the package instead
+    of assuming a depth.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "src" / "endnotex9_mcp" / "__init__.py").is_file():
+            return parent
+    return None
+
+
+PACKAGE_ROOT = package_root()
+if PACKAGE_ROOT is not None:
+    sys.path.insert(0, str(PACKAGE_ROOT / "src"))
+elif find_spec("endnotex9_mcp") is None:
+    raise SystemExit(
+        "Cannot find endnotex9_mcp. Run this script from an endnotex9-mcp checkout "
+        "or plugin directory, or install the package into the active environment."
+    )
+
+from endnotex9_mcp import config as configmod  # noqa: E402
+from endnotex9_mcp import groups, parser, refstable  # noqa: E402
+from endnotex9_mcp.refstable import VALUE_SEPARATOR  # noqa: E402
 
 
 def load_library():
@@ -98,7 +121,11 @@ def looks_abbrev_journal(journal):
     if not tokens:
         return False
     short_ratio = sum(1 for t in tokens if len(t) <= 5) / len(tokens)
-    return not re.search(r"\b(of|the|and)\b", journal, re.I) and len(tokens) <= 5 and short_ratio >= 0.6
+    return (
+        not re.search(r"\b(of|the|and)\b", journal, re.I)
+        and len(tokens) <= 5
+        and short_ratio >= 0.6
+    )
 
 
 def norm_name(s):
@@ -111,7 +138,11 @@ def norm_name(s):
     a match against any name on earth. Those keep their own characters
     instead, which compare equal to each other and unequal to Latin ones.
     """
-    folded = re.sub(r"[^a-z]", "", unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower())
+    folded = re.sub(
+        r"[^a-z]",
+        "",
+        unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower(),
+    )
     if folded:
         return folded
     return re.sub(r"[\s\W_]", "", unicodedata.normalize("NFKC", s).lower())
@@ -153,9 +184,7 @@ def author_list_is_truncated(authors, crossref_names):
     """
     if len(authors) >= len(crossref_names):
         return False
-    return all(
-        same_surname(author, crossref_names[i][0]) for i, author in enumerate(authors)
-    )
+    return all(same_surname(author, crossref_names[i][0]) for i, author in enumerate(authors))
 
 
 def norm_title(t):
@@ -166,7 +195,9 @@ def norm_title(t):
     papers by one author in one year would look like duplicates.
     """
     folded = re.sub(
-        r"[^a-z0-9]", "", unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii").lower()
+        r"[^a-z0-9]",
+        "",
+        unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii").lower(),
     )
     stripped = re.sub(r"[\s\W_]", "", unicodedata.normalize("NFKC", t).lower())
     # Prefer the ASCII fold only when it kept essentially the whole title;

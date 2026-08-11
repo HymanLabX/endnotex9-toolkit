@@ -1,0 +1,39 @@
+{
+  "name": "endnotex9",
+  "version": "0.1.0",
+  "description": "Local-first EndNote X9 assistant: an MCP server that reads, searches, cites and narrowly corrects an .enl library without uploading it, plus skills for cleaning metadata, downloading full text, classifying the library, and close-reading a single paper.",
+  "author": {
+    "name": "HymanLab",
+    "url": "https://github.com/HymanLabX"
+  },
+  "homepage": "https://github.com/HymanLabX/endnotex9-mcp",
+  "repository": "https://github.com/HymanLabX/endnotex9-mcp",
+  "license": "MIT",
+  "keywords": [
+    "endnote",
+    "references",
+    "citation",
+    "bibliography",
+    "academic",
+    "research",
+    "literature",
+    "pdf"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "EndNote X9",
+    "shortDescription": "Search, cite, and tidy a local EndNote X9 library",
+    "longDescription": "Read, search, and cite an EndNote X9 library without uploading it, and drive four skills over it: clean up metadata and duplicates, download and attach full-text PDFs, build a reviewable topic classification, and close-read a single paper. Every write is backed up first, defaults to a dry run, and refuses to run while EndNote holds the library open.",
+    "developerName": "HymanLab",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/HymanLabX/endnotex9-mcp",
+    "defaultPrompt": [
+      "Clean up my EndNote library's metadata and duplicates.",
+      "Read the paper I have selected in EndNote in depth.",
+      "Classify my EndNote library by topic."
+    ],
+    "brandColor": "#2E7D5B"
+  }
+}

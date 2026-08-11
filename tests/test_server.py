@@ -477,9 +477,7 @@ def test_update_reference_fields_refuses_non_writable_fields(wired, tmp_path):
 
 
 def test_update_reference_fields_writes_author_and_journal(wired, tmp_path):
-    _wire_real_library(
-        wired, tmp_path, [_row(1, title="A paper", author="Zhang, Z.", year="2024")]
-    )
+    _wire_real_library(wired, tmp_path, [_row(1, title="A paper", author="Zhang, Z.", year="2024")])
     committed = _payload(
         _call(
             "update_reference_fields",

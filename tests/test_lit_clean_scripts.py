@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "lit-clean" / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "lit-clean" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import common  # noqa: E402
@@ -71,9 +71,7 @@ def test_latin_surname_matching_tolerates_punctuation_and_accents():
 
 
 def test_a_cjk_author_list_is_not_reported_as_truncated_against_latin_names():
-    assert not common.author_list_is_truncated(
-        ["张三, 三"], [("Smith", "John"), ("Doe", "Jane")]
-    )
+    assert not common.author_list_is_truncated(["张三, 三"], [("Smith", "John"), ("Doe", "Jane")])
 
 
 def test_cjk_titles_that_differ_do_not_fold_to_the_same_key():
@@ -96,10 +94,25 @@ def test_latin_titles_still_fold_past_punctuation_and_case():
 @pytest.mark.parametrize(
     ("authors", "crossref_names", "expected", "why"),
     [
-        (["Zhu, Xuejie"], [("Zhu", "X"), ("Zhang", "X"), ("Qian", "M")], True, "full names, cut short"),
-        (["Xu, Z.", "Ji, Y."], [("Xu", "Zhizhi"), ("Ji", "Yuanchao"), ("Liu", "C")], True, "initials, cut short"),
+        (
+            ["Zhu, Xuejie"],
+            [("Zhu", "X"), ("Zhang", "X"), ("Qian", "M")],
+            True,
+            "full names, cut short",
+        ),
+        (
+            ["Xu, Z.", "Ji, Y."],
+            [("Xu", "Zhizhi"), ("Ji", "Yuanchao"), ("Liu", "C")],
+            True,
+            "initials, cut short",
+        ),
         (["Smith, J."], [("Wang", "Wei"), ("Li", "Ming")], False, "surnames disagree"),
-        (["A, X", "B, Y", "C, Z"], [("A", "X"), ("B", "Y")], False, "never shorten a longer local list"),
+        (
+            ["A, X", "B, Y", "C, Z"],
+            [("A", "X"), ("B", "Y")],
+            False,
+            "never shorten a longer local list",
+        ),
         (["A, X", "B, Y"], [("A", "X"), ("B", "Y")], False, "same length is not truncation"),
         (["B, Y", "A, X"], [("A", "X"), ("B", "Y"), ("C", "Z")], False, "order disagrees"),
     ],
@@ -170,7 +183,9 @@ def test_journal_from_alternate_title_does_not_wipe_unrelated_notes():
 
 def test_a_truncated_author_list_is_completed_from_crossref():
     rows = {1: _row(1, author="Zhu, Xuejie", electronic_resource_number="10.1/x")}
-    message = {"author": [{"family": "Zhu", "given": "Xuejie"}, {"family": "Zhang", "given": "Xuexi"}]}
+    message = {
+        "author": [{"family": "Zhu", "given": "Xuejie"}, {"family": "Zhang", "given": "Xuexi"}]
+    }
     updates, stats, _ = metadata.build_updates(rows, {"10.1/x": message})
     assert updates[1]["author"] == ["Zhu, Xuejie", "Zhang, Xuexi"]
     assert stats["author_completed_from_crossref"] == 1
@@ -297,6 +312,59 @@ def test_orphaned_pdfs_are_found_and_referenced_ones_are_not(tmp_path: Path):
     assert (on_disk, referenced) == (2, 1)
 
 
+def test_same_named_orphans_in_different_folders_both_survive(tmp_path: Path):
+    """Flattening to the bare filename overwrote one of every same-named pair.
+
+    EndNote files every attachment under its own numeric folder, so two
+    records holding `paper.pdf` collide as soon as both are orphaned -- the
+    normal outcome of the dedup flow. `shutil.move` onto an existing file
+    copies over it, so the loser was destroyed by the step this skill calls
+    reversible.
+    """
+    pdf_dir = tmp_path / "PDF"
+    (pdf_dir / "2923055561").mkdir(parents=True)
+    (pdf_dir / "3129223708").mkdir(parents=True)
+    (pdf_dir / "2923055561" / "paper.pdf").write_bytes(b"from-the-first-record")
+    (pdf_dir / "3129223708" / "paper.pdf").write_bytes(b"from-the-second-record")
+
+    orphans, _, _ = files_script.find_orphaned_pdfs({}, pdf_dir)
+    quarantine = pdf_dir / files_script.QUARANTINE_DIRNAME
+    moved, skipped = files_script.quarantine_orphans(orphans, pdf_dir, quarantine)
+
+    assert (moved, skipped) == (2, [])
+    assert (quarantine / "2923055561" / "paper.pdf").read_bytes() == b"from-the-first-record"
+    assert (quarantine / "3129223708" / "paper.pdf").read_bytes() == b"from-the-second-record"
+
+
+def test_an_occupied_quarantine_path_is_reported_not_overwritten(tmp_path: Path):
+    pdf_dir = tmp_path / "PDF"
+    (pdf_dir / "2923055561").mkdir(parents=True)
+    (pdf_dir / "2923055561" / "paper.pdf").write_bytes(b"new")
+    quarantine = pdf_dir / files_script.QUARANTINE_DIRNAME
+    (quarantine / "2923055561").mkdir(parents=True)
+    (quarantine / "2923055561" / "paper.pdf").write_bytes(b"already-here")
+
+    orphans, _, _ = files_script.find_orphaned_pdfs({}, pdf_dir)
+    moved, skipped = files_script.quarantine_orphans(orphans, pdf_dir, quarantine)
+
+    assert moved == 0
+    assert [p.name for p in skipped] == ["paper.pdf"]
+    assert (quarantine / "2923055561" / "paper.pdf").read_bytes() == b"already-here"
+    assert (pdf_dir / "2923055561" / "paper.pdf").read_bytes() == b"new"
+
+
+def test_quarantined_files_are_not_re_flagged_on_the_next_run(tmp_path: Path):
+    pdf_dir = tmp_path / "PDF"
+    (pdf_dir / "2923055561").mkdir(parents=True)
+    (pdf_dir / "2923055561" / "paper.pdf").write_bytes(b"junk")
+
+    orphans, _, _ = files_script.find_orphaned_pdfs({}, pdf_dir)
+    quarantine = pdf_dir / files_script.QUARANTINE_DIRNAME
+    files_script.quarantine_orphans(orphans, pdf_dir, quarantine)
+
+    assert files_script.find_orphaned_pdfs({}, pdf_dir)[0] == []
+
+
 def test_a_second_run_does_not_re_flag_its_own_quarantine(tmp_path: Path):
     """Left unexcluded, run two moved files onto themselves and crashed."""
     pdf_dir = tmp_path / "PDF"
@@ -377,7 +445,9 @@ def test_only_the_missing_dois_are_fetched(tmp_path: Path, monkeypatch):
     cache = tmp_path / "crossref_cache.json"
     cache.write_text(json.dumps({"10.1/known": {"volume": "7"}}), encoding="utf-8")
     asked = []
-    monkeypatch.setattr(crossref, "fetch_one", lambda doi, **kw: (asked.append(doi), (doi, {"volume": "9"}))[1])
+    monkeypatch.setattr(
+        crossref, "fetch_one", lambda doi, **kw: (asked.append(doi), (doi, {"volume": "9"}))[1]
+    )
 
     result = crossref.fetch_many(["10.1/known", "10.1/new"], cache_path=cache)
 

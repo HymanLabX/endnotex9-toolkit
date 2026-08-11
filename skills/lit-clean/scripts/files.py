@@ -20,13 +20,10 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
-
-import common
+import common  # side effect: puts the endnotex9_mcp package on sys.path
 
 from endnotex9_mcp import refstable
 
@@ -85,6 +82,37 @@ def dir_size(path):
     return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())
 
 
+def quarantine_orphans(orphans, pdf_dir, quarantine):
+    """Move each orphan under `quarantine`, keeping its path below `pdf_dir`.
+
+    Returns `(moved_count, skipped_paths)`.
+
+    The relative path is preserved rather than flattened to the bare
+    filename, which is not cosmetic. EndNote gives every attachment its own
+    numeric folder (`PDF/2923055561/tahara2009.pdf`), so distinct orphans
+    routinely share a basename, and `shutil.move` onto an existing file
+    falls back to `copy2` — it overwrites. Flattening therefore destroyed
+    one of every same-named pair, silently, in the step this skill
+    describes to the user as reversible. Duplicate records are the main
+    source of orphans and the likeliest to hold identically named PDFs, so
+    the collision was most likely in exactly this tool's own dedup flow.
+
+    Anything whose destination is already occupied is left where it is and
+    reported; overwriting is never the right recovery here.
+    """
+    pdf_dir = Path(pdf_dir)
+    moved, skipped = 0, []
+    for path in orphans:
+        dest = Path(quarantine) / path.relative_to(pdf_dir)
+        if dest.exists():
+            skipped.append(path)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(dest))
+        moved += 1
+    return moved, skipped
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", action="store_true")
@@ -108,29 +136,34 @@ def main():
         orphans = []
 
     prunable, kept = find_excess_backups(library_path, args.keep_backups, args.backup_age_days)
-    print(f"\nbackups: keeping {len(kept)} (most recent {args.keep_backups}, or newer than "
-          f"{args.backup_age_days} days), {len(prunable)} prunable")
+    print(
+        f"\nbackups: keeping {len(kept)} (most recent {args.keep_backups}, or newer than "
+        f"{args.backup_age_days} days), {len(prunable)} prunable"
+    )
     report["prunable_backups"] = [str(p) for p in prunable]
     report["prunable_backups_total_bytes"] = sum(dir_size(p) for p in prunable)
 
     OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "files_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT_DIR / "files_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     if not orphans and not prunable:
         print("\nnothing to clean up.")
         return
 
     if not args.commit:
-        print("\n(report only -- rerun with --commit to quarantine orphans and delete excess backups)")
+        print(
+            "\n(report only -- rerun with --commit to quarantine orphans and delete excess backups)"
+        )
         return
 
     if orphans:
         quarantine = Path(pdf_dir) / QUARANTINE_DIRNAME
-        quarantine.mkdir(exist_ok=True)
-        for p in orphans:
-            dest = quarantine / p.name
-            shutil.move(str(p), str(dest))
-        print(f"\nmoved {len(orphans)} orphaned PDF(s) to {quarantine}")
+        moved, skipped = quarantine_orphans(orphans, pdf_dir, quarantine)
+        print(f"\nmoved {moved} orphaned PDF(s) to {quarantine}")
+        for path in skipped:
+            print(f"  left in place (a file already sits at its quarantine path): {path}")
 
     for p in prunable:
         shutil.rmtree(p)

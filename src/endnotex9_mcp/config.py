@@ -50,6 +50,57 @@ def config_path() -> Path:
 # most recent first — see detect_open_library().
 _ENDNOTE_RECENT_LIBRARIES_KEY = r"Software\ISI ResearchSoft\EndNote\Recent Libraries"
 
+# Win32 error codes from CreateFileW, which is how `_is_held_by_another_process`
+# tells "another process has this" apart from "you may not write this".
+_ERROR_ACCESS_DENIED = 5
+_ERROR_SHARING_VIOLATION = 32
+
+
+def _is_held_by_another_process(path: str) -> bool:
+    """Whether `path` is open elsewhere, as opposed to merely not writable.
+
+    `open(path, "r+b")` cannot tell those apart. A sharing violation and a
+    read-only file both arrive as `PermissionError` with `errno` 13 and no
+    `winerror` set — the CRT reports one errno for both — so the plain-open
+    probe this used to run called a read-only *closed* library "open".
+    `load_config` would then silently retarget `library_path` at it purely
+    because it was the most recent MRU entry, which is the one outcome
+    `detect_open_library`'s lock check exists to prevent.
+
+    `CreateFileW` reports the real Win32 code instead: 32
+    (`ERROR_SHARING_VIOLATION`) means another process holds the file and is
+    the only answer that counts as "EndNote has it open"; 5
+    (`ERROR_ACCESS_DENIED`) is a read-only attribute, a read-only share or
+    an ACL, and says nothing about EndNote either way.
+    """
+    import ctypes
+
+    if not hasattr(ctypes, "WinDLL"):
+        # Off Windows there is no CreateFileW to ask. Reached only when a
+        # caller (or a test) has claimed win32; `ctypes.wintypes` would
+        # raise on import a line later anyway, so say why instead. The
+        # caller reads this as "cannot tell" and keeps the configured path.
+        raise OSError("CreateFileW is available on Windows only")
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    generic_write, open_existing = 0x40000000, 3
+    handle = kernel32.CreateFileW(str(path), generic_write, 0, None, open_existing, 0, None)
+    if handle == ctypes.c_void_p(-1).value:  # INVALID_HANDLE_VALUE
+        return ctypes.get_last_error() == _ERROR_SHARING_VIOLATION
+    kernel32.CloseHandle(handle)
+    return False
+
 
 def detect_open_library() -> str:
     """The `.enl` library currently open in EndNote X9, if any.
@@ -64,13 +115,19 @@ def detect_open_library() -> str:
     That alone only proves "most recently opened" — closing EndNote leaves
     the same entry sitting there, which would just trade one kind of
     staleness for another. The signal actually trusted here is a file-lock
-    check mirroring `writeback._ensure_unlocked`: EndNote holds a library's
-    `.enl` in a share mode that makes a plain `open(path, "r+b")` fail with
-    a sharing violation for as long as the library is open. Only a `File1`
+    check in the same spirit as `writeback._ensure_unlocked`: EndNote holds
+    a library's `.enl` in a share mode that makes a write open fail with a
+    sharing violation for as long as the library is open. Only a `File1`
     path that is both on disk and currently locked this way is returned; a
     merely-recent but now-closed library returns "", so a stale MRU entry
     can never override a working static config on a machine where EndNote
     is not (or no longer) running.
+
+    A sharing violation specifically — see `_is_held_by_another_process`.
+    Any failure to open is *not* good enough: a read-only `.enl`, on a
+    read-only share or with the read-only attribute set, fails the same way
+    while nothing has it open, and taking that as "EndNote is running here"
+    would retarget `library_path` at a library the user never opened.
 
     Windows only, and silent about it: other platforms, a missing registry
     key, or any read failure all just return "" so callers fall back to the
@@ -93,11 +150,10 @@ def detect_open_library() -> str:
     if not candidate or not Path(candidate).is_file():
         return ""
     try:
-        with open(candidate, "r+b"):
-            pass
+        held = _is_held_by_another_process(candidate)
     except OSError:
-        return candidate  # locked -> something (almost certainly EndNote) has it open
-    return ""  # opened cleanly -> nothing has it open right now
+        return ""
+    return candidate if held else ""
 
 
 def _pdf_dir_for_library(library_path: str) -> str:

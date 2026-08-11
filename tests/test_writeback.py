@@ -293,7 +293,13 @@ def test_shrinking_survives_the_files_self_verification(library_with_a_bloated_r
 
 
 def _first_block(rec_len: int, chunk: bytes, next_pos: int) -> bytes:
-    return b"\x05" + struct.pack(">H", rec_len) + struct.pack(">H", len(chunk)) + struct.pack(">Q", next_pos) + chunk
+    return (
+        b"\x05"
+        + struct.pack(">H", rec_len)
+        + struct.pack(">H", len(chunk))
+        + struct.pack(">Q", next_pos)
+        + chunk
+    )
 
 
 def _middle_block(chunk: bytes, next_pos: int) -> bytes:

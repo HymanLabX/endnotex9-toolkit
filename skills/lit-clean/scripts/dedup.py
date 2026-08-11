@@ -28,13 +28,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections import defaultdict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
-
-import common
+import common  # side effect: puts the endnotex9_mcp package on sys.path
 
 from endnotex9_mcp import commit
 
@@ -77,7 +74,6 @@ def classify(rows, group):
     if len(group) == 2 and len(pdf_recs) == 1 and len(no_pdf_recs) == 1:
         return {"keep": pdf_recs[0], "delete": no_pdf_recs[0]}
     return None
-
 
 
 # "notes" is deliberately excluded: it is where the PubMed/WoS import scratch
@@ -123,9 +119,17 @@ def main():
         if decision:
             resolved.append(decision)
         else:
-            needs_review.append({"group": group, "reason": "3+ members or has_pdf tied", "doi_confirmed": True})
+            needs_review.append(
+                {"group": group, "reason": "3+ members or has_pdf tied", "doi_confirmed": True}
+            )
     for group in likely:
-        needs_review.append({"group": group, "reason": "no DOI, title/year/author match only", "doi_confirmed": False})
+        needs_review.append(
+            {
+                "group": group,
+                "reason": "no DOI, title/year/author match only",
+                "doi_confirmed": False,
+            }
+        )
 
     print(f"records examined: {len(rows)}")
     print(f"confirmed DOI-duplicate groups: {len(confirmed)}")
@@ -141,12 +145,15 @@ def main():
     print(f"\nkeep-side records that gain merged fields: {len(merge_updates)}")
 
     OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "dedup_resolved.json").write_text(json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT_DIR / "dedup_resolved.json").write_text(
+        json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     (OUT_DIR / "dedup_needs_review.json").write_text(
         json.dumps(needs_review, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (OUT_DIR / "dedup_merge_updates.json").write_text(
-        json.dumps({str(k): v for k, v in merge_updates.items()}, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps({str(k): v for k, v in merge_updates.items()}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
     if not resolved:
@@ -156,13 +163,23 @@ def main():
     delete_recs = [d["delete"] for d in resolved]
 
     if merge_updates:
-        merge_preview = commit.update_reference_fields(rdb, library_path, merge_updates, dry_run=True)
-        print(f"\nmerge dry_run: would_write={merge_preview['would_write']} unchanged={merge_preview['unchanged']}")
+        merge_preview = commit.update_reference_fields(
+            rdb, library_path, merge_updates, dry_run=True
+        )
+        print(
+            f"\nmerge dry_run: would_write={merge_preview['would_write']} unchanged={merge_preview['unchanged']}"
+        )
 
-    mark_preview = commit.mark_records(rdb, library_path, delete_recs, args.marker, column=args.column, dry_run=True)
-    print(f"mark dry_run: would_mark={mark_preview['would_mark']} already_marked={mark_preview['already_marked']}")
+    mark_preview = commit.mark_records(
+        rdb, library_path, delete_recs, args.marker, column=args.column, dry_run=True
+    )
+    print(
+        f"mark dry_run: would_mark={mark_preview['would_mark']} already_marked={mark_preview['already_marked']}"
+    )
     if mark_preview["conflicts"]:
-        print(f"  conflicts (column already holds different text): {len(mark_preview['conflicts'])}")
+        print(
+            f"  conflicts (column already holds different text): {len(mark_preview['conflicts'])}"
+        )
 
     if not args.commit:
         print("\n(dry run only -- rerun with --commit to actually write)")
@@ -171,12 +188,20 @@ def main():
 
     if merge_updates:
         result = commit.update_reference_fields(rdb, library_path, merge_updates, dry_run=False)
-        print(f"\nmerge committed: records_written={result['records_written']} backup_path={result['backup_path']}")
+        print(
+            f"\nmerge committed: records_written={result['records_written']} backup_path={result['backup_path']}"
+        )
 
-    result = commit.mark_records(rdb, library_path, delete_recs, args.marker, column=args.column, dry_run=False)
-    print(f"mark committed: records_written={result['records_written']} backup_path={result['backup_path']}")
-    print(f"\nnow in EndNote: build a Smart Group '{args.column} contains {args.marker}', "
-          "review it, then delete the matches yourself.")
+    result = commit.mark_records(
+        rdb, library_path, delete_recs, args.marker, column=args.column, dry_run=False
+    )
+    print(
+        f"mark committed: records_written={result['records_written']} backup_path={result['backup_path']}"
+    )
+    print(
+        f"\nnow in EndNote: build a Smart Group '{args.column} contains {args.marker}', "
+        "review it, then delete the matches yourself."
+    )
 
 
 if __name__ == "__main__":

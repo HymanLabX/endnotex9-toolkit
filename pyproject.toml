@@ -51,6 +51,11 @@ endnotex9-mcp = "endnotex9_mcp.cli:main"
 [project.optional-dependencies]
 # PyMuPDF is AGPL-3.0 while this package is MIT. Keep PDF extraction opt-in.
 pdf = ["pymupdf>=1.24"]
+lit-downloader = [
+    "playwright>=1.62",
+    "pymupdf>=1.24",
+    'pywinauto>=0.6.9; sys_platform == "win32"',
+]
 dev = [
     "build>=1.2",
     "pytest>=8.0",
@@ -73,6 +78,12 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
+# E501 is deliberately absent, the way ruff itself recommends when the
+# formatter is in use: `line-length` above is enforced by `ruff format`
+# (CI runs `ruff format --check`), which wraps everything it can. What E501
+# would add on top is the handful of lines no formatter can split -- SQL
+# and f-strings in one literal -- where the only way to satisfy it is to
+# chop a statement mid-string for the linter's benefit.
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "RUF"]
 
 [tool.ruff.format]

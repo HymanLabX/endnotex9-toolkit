@@ -91,6 +91,7 @@ class _Connection(sqlite3.Connection):
 
     endnotex9_lock: threading.RLock
 
+
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -254,9 +255,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # threadsafety == 3 (SQLITE_THREADSAFE serialized), so the library
     # serialises access internally — and WAL keeps the background reindex
     # from blocking readers.
-    conn = sqlite3.connect(
-        str(db_path), timeout=15.0, check_same_thread=False, factory=_Connection
-    )
+    conn = sqlite3.connect(str(db_path), timeout=15.0, check_same_thread=False, factory=_Connection)
     conn.endnotex9_lock = _lock_for_path(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")

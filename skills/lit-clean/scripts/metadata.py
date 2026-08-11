@@ -38,12 +38,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
-
-import common
+import common  # side effect: puts the endnotex9_mcp package on sys.path
 import crossref
 
 from endnotex9_mcp import commit
@@ -143,7 +140,12 @@ def build_updates(rows, crossref_data):
                 )
 
         journal_abbrev_or_blank = not journal or common.looks_abbrev_journal(journal)
-        if journal_abbrev_or_blank and alt_title and alt_title != journal and len(alt_title) > len(journal):
+        if (
+            journal_abbrev_or_blank
+            and alt_title
+            and alt_title != journal
+            and len(alt_title) > len(journal)
+        ):
             fields["journal"] = alt_title
             stats["journal_from_alt_title"] += 1
             # journal came from alternate_title here, not notes -- do not
@@ -220,7 +222,9 @@ def main():
         authors = common.values(row, "author")
         journal = common.text(row, "secondary_title")
         note = common.text(row, "notes")
-        note_covers_author = any(common.is_abbrev_author(a) for a in authors) and common.notes_looks_like_pubmed_dump(note)
+        note_covers_author = any(
+            common.is_abbrev_author(a) for a in authors
+        ) and common.notes_looks_like_pubmed_dump(note)
         # Whether the list is truncated cannot be known without asking
         # CrossRef how many authors there are, so any record with a DOI is
         # worth a lookup on author grounds alone. Gating this on
@@ -229,7 +233,8 @@ def main():
         needs_author = bool(authors) and not note_covers_author
         needs_journal = not journal or common.looks_abbrev_journal(journal)
         needs_fill = any(
-            not common.text(row, c) for c in ("volume", "number", "pages", "section", "abstract", "title")
+            not common.text(row, c)
+            for c in ("volume", "number", "pages", "section", "abstract", "title")
         )
         if needs_author or needs_journal or needs_fill:
             needs_crossref.add(doi)
@@ -267,7 +272,9 @@ def main():
     (OUT_DIR / "metadata_updates.json").write_text(
         json.dumps({str(k): v for k, v in updates.items()}, ensure_ascii=False), encoding="utf-8"
     )
-    (OUT_DIR / "metadata_review.json").write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT_DIR / "metadata_review.json").write_text(
+        json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     if not updates:
         print("\nnothing to do.")
@@ -275,7 +282,9 @@ def main():
 
     preview = commit.update_reference_fields(rdb, library_path, updates, dry_run=True)
     print(f"\ndry_run: would_write={preview['would_write']} unchanged={preview['unchanged']}")
-    (OUT_DIR / "metadata_dry_run.json").write_text(json.dumps(preview, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT_DIR / "metadata_dry_run.json").write_text(
+        json.dumps(preview, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     review_count = len(review["author_count_mismatch"]) + len(review["author_surname_mismatch"])
     if review_count:
@@ -286,7 +295,9 @@ def main():
         return
 
     result = commit.update_reference_fields(rdb, library_path, updates, dry_run=False)
-    print(f"\ncommitted: records_written={result['records_written']} backup_path={result['backup_path']}")
+    print(
+        f"\ncommitted: records_written={result['records_written']} backup_path={result['backup_path']}"
+    )
     (OUT_DIR / "metadata_commit_result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )

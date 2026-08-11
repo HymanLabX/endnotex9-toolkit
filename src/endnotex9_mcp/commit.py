@@ -62,9 +62,7 @@ LIST_FIELDS = {
 
 # custom_1 is reserved for this server's own topic classification
 # (classification.py / writeplan.py); marking must not collide with it.
-MARKER_COLUMNS = frozenset(
-    {"custom_2", "custom_3", "custom_4", "custom_5", "custom_6", "custom_7"}
-)
+MARKER_COLUMNS = frozenset({"custom_2", "custom_3", "custom_4", "custom_5", "custom_6", "custom_7"})
 
 
 class CommitError(RuntimeError):
@@ -88,7 +86,10 @@ def _current_rows(rdb_dir: str | Path, rec_numbers, columns) -> dict[int, dict]:
     missing = sorted(wanted - set(rows))
     if missing:
         raise CommitError(f"no such records: {missing[:10]}")
-    return {rec_number: {column: row.get(column) for column in columns} for rec_number, row in rows.items()}
+    return {
+        rec_number: {column: row.get(column) for column in columns}
+        for rec_number, row in rows.items()
+    }
 
 
 def update_reference_fields(
@@ -138,7 +139,12 @@ def update_reference_fields(
                 old_value = _decode(before[rec_number][column])
                 new_clean = str(new_value)
             diffs.append(
-                {"rec_number": rec_number, "field": field, "old_value": old_value, "new_value": new_clean}
+                {
+                    "rec_number": rec_number,
+                    "field": field,
+                    "old_value": old_value,
+                    "new_value": new_clean,
+                }
             )
     changed = [d for d in diffs if d["old_value"] != d["new_value"]]
 
@@ -200,7 +206,9 @@ def mark_records(
         raise CommitError("rec_numbers must contain at least one record")
 
     unique = sorted(set(rec_numbers))
-    before = {rec: _decode(row[column]) for rec, row in _current_rows(rdb_dir, unique, {column}).items()}
+    before = {
+        rec: _decode(row[column]) for rec, row in _current_rows(rdb_dir, unique, {column}).items()
+    }
     conflicts = {rec: before[rec] for rec in unique if before[rec] and before[rec] != marker}
     if conflicts and not force:
         raise CommitError(
@@ -221,7 +229,9 @@ def mark_records(
         return {"dry_run": False, "records_written": 0, "backup_path": None, "column": column}
 
     backup_path = writeback.backup_library(rdb_dir, enl_path)
-    result = writeback.set_column(rdb_dir, enl_path, {rec: marker for rec in to_write}, column=column)
+    result = writeback.set_column(
+        rdb_dir, enl_path, {rec: marker for rec in to_write}, column=column
+    )
 
     return {
         "dry_run": False,

@@ -23,9 +23,7 @@ from pathlib import Path
 # faster, more reliable pool. Set CROSSREF_MAILTO to a real address to opt
 # in; a made-up one is worse than none, so the default sends no address.
 _MAILTO = os.environ.get("CROSSREF_MAILTO", "").strip()
-HEADERS = {
-    "User-Agent": f"lit-clean/1.0 (mailto:{_MAILTO})" if _MAILTO else "lit-clean/1.0"
-}
+HEADERS = {"User-Agent": f"lit-clean/1.0 (mailto:{_MAILTO})" if _MAILTO else "lit-clean/1.0"}
 
 
 def fetch_one(doi, timeout=20, retries=3):
@@ -91,9 +89,7 @@ def fetch_many(dois, max_workers=8, on_progress=None, cache_path=None, refresh=F
         keep = {**cached, **{d: m for d, m in results.items() if m != "ERROR"}}
         try:
             Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(cache_path).write_text(
-                json.dumps(keep, ensure_ascii=False), encoding="utf-8"
-            )
+            Path(cache_path).write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass  # the cache is an optimisation; losing it must not fail a run
     return results

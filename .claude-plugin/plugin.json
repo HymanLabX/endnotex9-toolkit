@@ -1,0 +1,24 @@
+{
+  "name": "endnotex9",
+  "version": "0.1.0",
+  "description": "Local-first EndNote X9 assistant: an MCP server that reads, searches, cites and narrowly corrects an .enl library without uploading it, plus skills for cleaning metadata, downloading full text, classifying the library, and close-reading a single paper.",
+  "author": {
+    "name": "HymanLab",
+    "url": "https://github.com/HymanLabX"
+  },
+  "homepage": "https://github.com/HymanLabX/endnotex9-mcp",
+  "repository": "https://github.com/HymanLabX/endnotex9-mcp",
+  "license": "MIT",
+  "keywords": [
+    "endnote",
+    "references",
+    "citation",
+    "bibliography",
+    "academic",
+    "research",
+    "literature",
+    "pdf"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

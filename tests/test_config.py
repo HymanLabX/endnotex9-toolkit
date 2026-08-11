@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -215,6 +218,75 @@ def test_detect_open_library_is_a_noop_off_windows(monkeypatch):
     assert config.detect_open_library() == ""
 
 
+# --------------------------------------------------------------------------
+# _is_held_by_another_process
+#
+# The probe used to be `open(path, "r+b")` and treat any failure as "EndNote
+# has this open". A read-only `.enl` fails identically -- errno 13, no
+# `winerror` -- while nothing holds it, so a closed read-only library was
+# reported as open and `load_config` retargeted `library_path` at it.
+# --------------------------------------------------------------------------
+
+pytestmark_win32 = pytest.mark.skipif(
+    sys.platform != "win32", reason="the lock probe is a Win32 call"
+)
+
+
+@pytestmark_win32
+def test_an_unheld_library_is_not_reported_as_open(tmp_path: Path):
+    library = tmp_path / "free.enl"
+    library.write_bytes(b"x")
+    assert config._is_held_by_another_process(str(library)) is False
+
+
+@pytestmark_win32
+def test_a_read_only_library_nobody_has_open_is_not_reported_as_open(tmp_path: Path):
+    library = tmp_path / "readonly.enl"
+    library.write_bytes(b"x")
+    os.chmod(library, stat.S_IREAD)
+    try:
+        # ERROR_ACCESS_DENIED, not ERROR_SHARING_VIOLATION: unwritable says
+        # nothing about whether EndNote is running.
+        assert config._is_held_by_another_process(str(library)) is False
+    finally:
+        os.chmod(library, stat.S_IWRITE)
+
+
+@pytestmark_win32
+def test_a_library_held_by_another_process_is_reported_as_open(tmp_path: Path):
+    library = tmp_path / "held.enl"
+    library.write_bytes(b"x")
+    # Open it the way EndNote does: readable by others, writable by nobody
+    # else. A plain `open(..., "rb")` would not reproduce this -- Python
+    # shares the file freely and the probe would (correctly) see no lock.
+    #
+    # Imported here rather than at module scope: `ctypes.wintypes` raises on
+    # import off Windows, where this whole section is skipped anyway.
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    generic_read, file_share_read, open_existing = 0x80000000, 0x00000001, 3
+    handle = kernel32.CreateFileW(
+        str(library), generic_read, file_share_read, None, open_existing, 0, None
+    )
+    assert handle != ctypes.c_void_p(-1).value, "could not stage the lock"
+    try:
+        assert config._is_held_by_another_process(str(library)) is True
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def test_detect_open_library_ignores_a_recent_but_unlocked_library(tmp_path: Path, monkeypatch):
     """MRU proves 'recently opened', not 'open now' -- see the docstring."""
     monkeypatch.setattr(config.sys, "platform", "win32")
@@ -266,13 +338,11 @@ def test_detect_open_library_returns_a_locked_mru_entry(tmp_path: Path, monkeypa
     )
     monkeypatch.setitem(__import__("sys").modules, "winreg", fake_winreg)
 
-    real_open = __import__("builtins").open
-
-    def deny_write(path, mode="r", *a, **kw):
-        if Path(path) == open_now:
-            raise PermissionError("simulated: EndNote has this open")
-        return real_open(path, mode, *a, **kw)
-
-    monkeypatch.setattr("builtins.open", deny_write)
+    # Stubbed at the probe, not at `builtins.open`. Faking the lock with a
+    # `PermissionError` from `open` is what let the read-only bug through:
+    # it is the same exception an unwritable-but-closed library raises, so a
+    # test written that way passes whether or not the code can tell the two
+    # apart. `_is_held_by_another_process` has its own Win32-level tests.
+    monkeypatch.setattr(config, "_is_held_by_another_process", lambda path: True)
 
     assert config.detect_open_library() == str(open_now)

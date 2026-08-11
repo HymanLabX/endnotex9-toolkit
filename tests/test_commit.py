@@ -68,7 +68,8 @@ def library(tmp_path: Path) -> tuple[Path, Path]:
 
 def _read(rdb: Path) -> dict:
     return {
-        writeback.decode_row(r)["id"]: writeback.decode_row(r) for r in myisam.read_records(rdb / "refs.MYD")
+        writeback.decode_row(r)["id"]: writeback.decode_row(r)
+        for r in myisam.read_records(rdb / "refs.MYD")
     }
 
 
@@ -118,7 +119,9 @@ def test_a_field_already_matching_is_reported_but_not_written(library):
     result = commit.update_reference_fields(rdb, enl, {2: {"volume": "14"}}, dry_run=False)
     assert result["records_written"] == 0
     assert result["backup_path"] is None
-    assert result["diffs"] == [{"rec_number": 2, "field": "volume", "old_value": "14", "new_value": "14"}]
+    assert result["diffs"] == [
+        {"rec_number": 2, "field": "volume", "old_value": "14", "new_value": "14"}
+    ]
 
 
 def test_refuses_non_writable_fields(library):
@@ -225,7 +228,9 @@ def test_list_field_strips_blanks_and_a_no_op_write_is_not_backed_up(library):
         "dry_run": False,
         "records_written": 0,
         "backup_path": None,
-        "diffs": [{"rec_number": 1, "field": "author", "old_value": ["Li, D."], "new_value": ["Li, D."]}],
+        "diffs": [
+            {"rec_number": 1, "field": "author", "old_value": ["Li, D."], "new_value": ["Li, D."]}
+        ],
     }
 
 
@@ -268,7 +273,9 @@ def test_mark_refuses_to_clobber_existing_different_text(library):
 def test_mark_force_overwrites_existing_text(library):
     rdb, enl = library
     commit.mark_records(rdb, enl, [1], "first", column="custom_7", dry_run=False)
-    result = commit.mark_records(rdb, enl, [1], "second", column="custom_7", force=True, dry_run=False)
+    result = commit.mark_records(
+        rdb, enl, [1], "second", column="custom_7", force=True, dry_run=False
+    )
     assert result["records_written"] == 1
     assert _read(rdb)[1]["custom_7"] == b"second"
 
@@ -277,4 +284,9 @@ def test_mark_is_idempotent_for_already_marked_records(library):
     rdb, enl = library
     commit.mark_records(rdb, enl, [1], "DELETE_CANDIDATE", dry_run=False)
     result = commit.mark_records(rdb, enl, [1], "DELETE_CANDIDATE", dry_run=False)
-    assert result == {"dry_run": False, "records_written": 0, "backup_path": None, "column": "custom_7"}
+    assert result == {
+        "dry_run": False,
+        "records_written": 0,
+        "backup_path": None,
+        "column": "custom_7",
+    }
