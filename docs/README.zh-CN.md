@@ -108,7 +108,7 @@ codex plugin add endnotex9@endnotex9
 `tests/test_plugin_manifests.py` 保证不漂移。
 
 **Codex 独有的一个坑：沙箱。** Codex 默认的 `workspace-write` 策略只允许写工作目录、并且禁网，
-而你的 EndNote 库几乎一定在工作目录之外。只读没问题，但 `lit-clean` 的 CrossRef 查询需要网络，
+而你的 EndNote 库几乎一定在工作目录之外。只读没问题，但 `lit-cleaner` 的 CrossRef 查询需要网络，
 任何 `--commit`（以及所有 `update_reference_fields`/`mark_references` 写入）需要库所在目录可写。
 按需放开即可，不必直接上 `danger-full-access`：
 
@@ -135,9 +135,9 @@ uv run --directory <插件目录> endnotex9-mcp setup
 
 | 技能 | 作用 |
 |---|---|
-| `/lit-clean` | 补全或纠正元数据、合并重复条目、清理孤儿 PDF 与旧备份。 |
+| `/lit-cleaner` | 补全或纠正元数据、合并重复条目、清理孤儿 PDF 与旧备份。 |
 | `/lit-downloader` | 为选中的记录下载、校验并原生附加全文 PDF（仅 Windows）。 |
-| `/lit-classify` | 画像、提出分类体系、编写受限规则、抽样审计，并生成 `Custom 1` 只读回写预览。 |
+| `/lit-classifier` | 画像、提出分类体系、编写受限规则、抽样审计，并生成 `Custom 1` 只读回写预览。 |
 | `/lit-deep-reader` | 基于附件 PDF 按 triage/standard/deep 三档精读单篇文献，对照全文核验其结论，可选择把笔记写回该记录的 Notes 字段。 |
 
 `lit-deep-reader` 本身不写库：`notes_block.py` 只负责把本次笔记并入 Notes 字段中已有的内容，

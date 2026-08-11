@@ -13,12 +13,12 @@
       "version": "0.1.0",
       "license": "MIT",
       "category": "productivity",
-      "description": "One MCP server over an EndNote X9 library (search, full text, citations, backup-first field writeback) and four skills: lit-clean, lit-downloader, lit-classify, lit-deep-reader. Requires uv; the library never leaves the machine.",
+      "description": "One MCP server over an EndNote X9 library (search, full text, citations, backup-first field writeback) and four skills: lit-cleaner, lit-downloader, lit-classifier, lit-deep-reader. Requires uv; the library never leaves the machine.",
       "homepage": "https://github.com/HymanLabX/endnotex9-mcp",
       "skills": [
-        "./skills/lit-clean",
+        "./skills/lit-cleaner",
         "./skills/lit-downloader",
-        "./skills/lit-classify",
+        "./skills/lit-classifier",
         "./skills/lit-deep-reader"
       ]
     }

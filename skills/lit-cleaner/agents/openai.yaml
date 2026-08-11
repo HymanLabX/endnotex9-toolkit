@@ -1,4 +1,4 @@
 interface:
   display_name: "EndNote Library Cleanup"
   short_description: "Fix metadata, merge duplicates, tidy stray PDFs"
-  default_prompt: "Use $lit-clean to report what my EndNote library's metadata, duplicates, and orphaned PDFs need."
+  default_prompt: "Use $lit-cleaner to report what my EndNote library's metadata, duplicates, and orphaned PDFs need."

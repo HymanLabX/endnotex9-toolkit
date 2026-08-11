@@ -23,7 +23,7 @@ from pathlib import Path
 # faster, more reliable pool. Set CROSSREF_MAILTO to a real address to opt
 # in; a made-up one is worse than none, so the default sends no address.
 _MAILTO = os.environ.get("CROSSREF_MAILTO", "").strip()
-HEADERS = {"User-Agent": f"lit-clean/1.0 (mailto:{_MAILTO})" if _MAILTO else "lit-clean/1.0"}
+HEADERS = {"User-Agent": f"lit-cleaner/1.0 (mailto:{_MAILTO})" if _MAILTO else "lit-cleaner/1.0"}
 
 
 def fetch_one(doi, timeout=20, retries=3):

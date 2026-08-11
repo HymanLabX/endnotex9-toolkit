@@ -131,7 +131,7 @@ Two rules on honesty here, because they are what makes this skill worth running:
 
 `find_related` gives a term-overlap neighbourhood — nearby references the user already owns. Use
 it for one short "how this sits against what you already have" note, and mention when a neighbour
-looks like a duplicate (that is `lit-clean`'s dedup flow, not this skill's job).
+looks like a duplicate (that is `lit-cleaner`'s dedup flow, not this skill's job).
 
 `get_citation(style="apa7" | "gbt7714")` when the user wants the formatted reference to paste;
 `get_bibtex` when they want the `.bib` entry.

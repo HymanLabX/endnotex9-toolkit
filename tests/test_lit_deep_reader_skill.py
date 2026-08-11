@@ -2,7 +2,7 @@
 
 `update_reference_fields` replaces the Notes field, so the only thing
 standing between a saved reading note and a wiped field is the string this
-script composes. That makes it worth the same suspicion as the lit-clean
+script composes. That makes it worth the same suspicion as the lit-cleaner
 scripts: the failure is silent, the diff looks plausible, and the text that
 disappears is the user's own.
 

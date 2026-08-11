@@ -1,4 +1,4 @@
-"""Shared helpers for the lit-clean scripts.
+"""Shared helpers for the lit-cleaner scripts.
 
 Every script here is read-only until the caller explicitly asks for a
 commit; nothing imports EndNote or writes without going through

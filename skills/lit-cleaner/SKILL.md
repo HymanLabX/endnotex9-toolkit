@@ -1,9 +1,9 @@
 ---
-name: lit-clean
-description: Clean up an EndNote X9 library through endnotex9-mcp -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /lit-clean, or asks to clean, dedupe, or fix up their EndNote library's metadata.
+name: lit-cleaner
+description: Clean up an EndNote X9 library through endnotex9-mcp -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /lit-cleaner, or asks to clean, dedupe, or fix up their EndNote library's metadata.
 ---
 
-# lit-clean
+# lit-cleaner
 
 Three capabilities over the library configured for this project's `endnotex9-mcp` server
 (`~/.config/endnotex9-mcp/config.yaml` or the platform equivalent — the scripts below load it the
@@ -29,7 +29,7 @@ package. Run every script through that environment so it sees the same dependenc
 server itself:
 
 ```powershell
-uv run --directory "$env:CLAUDE_PLUGIN_ROOT" python "$env:CLAUDE_PLUGIN_ROOT/skills/lit-clean/scripts/metadata.py"
+uv run --directory "$env:CLAUDE_PLUGIN_ROOT" python "$env:CLAUDE_PLUGIN_ROOT/skills/lit-cleaner/scripts/metadata.py"
 ```
 
 Use the shell's own syntax for that variable: `$env:CLAUDE_PLUGIN_ROOT` in PowerShell, as above,
@@ -39,7 +39,7 @@ command into `uv run --directory ""` and fails somewhere unhelpful.
 
 Below, `metadata.py`, `dedup.py` and `files.py` are shorthand for exactly that command shape with
 the script name swapped; `scripts/out/*.json` means
-`<plugin-root>/skills/lit-clean/scripts/out/*.json`, which the Read tool needs spelled out in
+`<plugin-root>/skills/lit-cleaner/scripts/out/*.json`, which the Read tool needs spelled out in
 full. If `CLAUDE_PLUGIN_ROOT` is unset — you are working in an endnotex9-mcp checkout rather
 than through the installed plugin — substitute the checkout root; the scripts locate the package
 by walking up from their own path, so both layouts work.
@@ -109,9 +109,14 @@ Parse the skill's `args` loosely, not as a strict CLI:
 4. `dedup.py --commit`. This merges first, then tags — report both `records_written`
    counts and the `backup_path` values.
 5. Tell the user exactly what to do next in EndNote: build a Smart Group with the condition
-   `<column> contains <marker>` (defaults `custom_7` / `LIT_CLEAN_DUPLICATE`, both scripted flags
+   `<column> contains <marker>` (defaults `custom_7` / `LIT_CLEANER_DUPLICATE`, both scripted flags
    if the user wants different ones), review it, and delete the matches themselves. Offer to
    re-verify afterward (e.g. `library_stats`) if they want confirmation the count dropped.
+   **If they already have a Smart Group from a run made before this skill was renamed**, its
+   condition names `LIT_CLEAN_DUPLICATE`, which `LIT_CLEANER_DUPLICATE` does not contain — that
+   group will silently stop matching anything tagged from now on. Say so, and offer either
+   condition `contains LIT_CLEAN` (a prefix of both markers, so one group covers old and new) or
+   `--marker LIT_CLEAN_DUPLICATE` to keep tagging under the original.
 
 ## Files flow
 
@@ -121,12 +126,14 @@ Parse the skill's `args` loosely, not as a strict CLI:
    14 days regardless of count — mention if the user wants different thresholds via
    `--keep-backups`/`--backup-age-days`).
 3. Unless trust mode: show the counts (not necessarily every path) and wait for confirmation.
-4. `files.py --commit`. Orphaned PDFs are *moved* to `<pdf_dir>/_lit_clean_orphans/`
+4. `files.py --commit`. Orphaned PDFs are *moved* to `<pdf_dir>/_lit_cleaner_orphans/`
    (reversible — tell the user where, so they can delete that folder themselves once they've
    checked it), not deleted outright. Each one keeps its EndNote subfolder inside the quarantine
-   (`_lit_clean_orphans/2923055561/paper.pdf`), so same-named attachments from different records
+   (`_lit_cleaner_orphans/2923055561/paper.pdf`), so same-named attachments from different records
    cannot land on each other; anything whose destination is already occupied is reported and left
-   in place. Excess backups are deleted for real, since a backup existing
+   in place. A `_lit_clean_orphans/` folder from before the rename is skipped by the scan, not
+   migrated: those files stay where the user left them, so mention both folders if one exists.
+   Excess backups are deleted for real, since a backup existing
    only to be deleted by the very next backup isn't protecting anything — but only the ones that
    were both beyond the recency count and past the age threshold, which the report already showed.
 

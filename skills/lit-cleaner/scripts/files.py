@@ -1,9 +1,9 @@
-"""lit-clean files: orphaned PDF attachments + this tool's own old backups.
+"""lit-cleaner files: orphaned PDF attachments + this tool's own old backups.
 
 Pure filesystem operations -- never touches refs.MYD/MYI/.enl, so none of
 writeback.py's guardrails apply here and none are needed: nothing here is a
 MyISAM write. Still list-then-confirm, same as everything else in
-lit-clean: orphaned PDFs are moved to a quarantine folder (reversible), not
+lit-cleaner: orphaned PDFs are moved to a quarantine folder (reversible), not
 deleted outright; old backups are only ever candidates beyond both a
 recency count and an age threshold, and are actually deleted only once
 listed and confirmed (backups are themselves insurance, so removing one is
@@ -29,20 +29,22 @@ from endnotex9_mcp import refstable
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
-# Where a --commit run quarantines orphans (see main()), and the one folder
-# the scan skips. Without the skip a second run would find its own
-# previously quarantined files unreferenced all over again, re-add them to
-# `orphans`, and move them a second time.
+# Where a --commit run quarantines orphans (see main()).
+QUARANTINE_DIRNAME = "_lit_cleaner_orphans"
+
+# Every quarantine folder to skip while scanning. Without this a second run
+# would find its own previously quarantined files unreferenced all over
+# again, re-add them to `orphans`, and try to shutil.move() them onto
+# themselves. The second entry is the name this skill used before it was
+# renamed from lit-clean: a library quarantined under the old name still has
+# files sitting there awaiting the user's review, and re-flagging them would
+# move them a second time, into the new folder, unannounced.
 #
-# `_ref_clean_orphans`, the name this skill used before it was renamed from
-# ref-clean, was skipped here too until neither library on the machine held
-# such a folder any longer. A library that still does -- an old backup, a
-# copy synced from elsewhere -- will have its contents re-quarantined under
-# the current name on the next run. That is a second silent move of files
-# awaiting review, not a loss: `quarantine_orphans` preserves each file's
-# relative path and refuses an occupied destination, so nothing is
-# overwritten the way the old flat scheme would have.
-QUARANTINE_DIRNAME = "_lit_clean_orphans"
+# `_ref_clean_orphans` from the ref-clean rename before that is deliberately
+# absent -- it was dropped once no library on this machine held one. This
+# name is the opposite case: it was in use right up to the rename, so the
+# folders it guards are the ones likeliest to actually exist.
+QUARANTINE_DIRNAMES = (QUARANTINE_DIRNAME, "_lit_clean_orphans")
 
 
 def find_orphaned_pdfs(rows, pdf_dir):
@@ -56,7 +58,7 @@ def find_orphaned_pdfs(rows, pdf_dir):
     if pdf_dir.is_dir():
         for path in pdf_dir.rglob("*"):
             parents = path.relative_to(pdf_dir).parts[:-1]
-            if path.is_file() and QUARANTINE_DIRNAME not in parents:
+            if path.is_file() and not any(d in parents for d in QUARANTINE_DIRNAMES):
                 on_disk.append(path)
 
     orphans = []

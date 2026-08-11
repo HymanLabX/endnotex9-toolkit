@@ -1,9 +1,9 @@
 ---
-name: lit-classify
-description: Build a reviewable topic classification over an EndNote X9 library with endnotex9-mcp -- profile the corpus, propose a facet taxonomy, write bounded declarative rules, evaluate them, audit a holdout sample, and produce the read-only Custom 1 writeback preview. Use when the user invokes /lit-classify, or asks to classify, categorize, tag by topic, or build a taxonomy over their EndNote library.
+name: lit-classifier
+description: Build a reviewable topic classification over an EndNote X9 library with endnotex9-mcp -- profile the corpus, propose a facet taxonomy, write bounded declarative rules, evaluate them, audit a holdout sample, and produce the read-only Custom 1 writeback preview. Use when the user invokes /lit-classifier, or asks to classify, categorize, tag by topic, or build a taxonomy over their EndNote library.
 ---
 
-# lit-classify
+# lit-classifier
 
 Drive the `endnotex9` MCP server's classification workflow. Every tool named below is an MCP
 tool on that server; this skill adds no scripts of its own.
@@ -48,7 +48,7 @@ read. Propose facets from what is actually in *this* library — not from a gene
 you already know. Then `create_classification_session`; it pins a library fingerprint, so a later
 `evaluate_classification_rules` refuses to run if the index moved underneath it.
 
-If the library changes mid-session (a `lit-clean` commit, new imports), the session is dead. Say
+If the library changes mid-session (a `lit-cleaner` commit, new imports), the session is dead. Say
 so and start a new one rather than working around the fingerprint.
 
 ## 3. Taxonomy, then the user's approval

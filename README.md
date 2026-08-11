@@ -131,7 +131,7 @@ manifests are kept in step by `tests/test_plugin_manifests.py`.
 
 **One Codex-specific caveat: the sandbox.** Codex's default `workspace-write` policy confines
 writes to the working directory and blocks network access, and your EndNote library almost
-certainly lives outside that directory. Reading works, but `lit-clean`'s CrossRef lookups need
+certainly lives outside that directory. Reading works, but `lit-cleaner`'s CrossRef lookups need
 the network, and any `--commit` — like every `update_reference_fields`/`mark_references` write —
 needs the library's own directory to be writable. Grant those explicitly rather than reaching for
 `danger-full-access`:
@@ -161,9 +161,9 @@ The plugin ships four skills. Claude Code exposes them as slash commands; Codex 
 
 | Skill | What it does |
 |---|---|
-| `/lit-clean` | Fill in or correct metadata, merge duplicates, tidy orphaned PDFs and old backups. |
+| `/lit-cleaner` | Fill in or correct metadata, merge duplicates, tidy orphaned PDFs and old backups. |
 | `/lit-downloader` | Download, verify, and natively attach full-text PDFs to selected records (Windows). |
-| `/lit-classify` | Profile, propose a taxonomy, write bounded rules, audit, and preview the `Custom 1` writeback. |
+| `/lit-classifier` | Profile, propose a taxonomy, write bounded rules, audit, and preview the `Custom 1` writeback. |
 | `/lit-deep-reader` | Close-read one paper from its attached PDF at triage/standard/deep depth, verify its claims against the full text, and optionally save a note into its Notes field. |
 
 `lit-deep-reader` writes nothing by itself: its `notes_block.py` merges the reading note into
@@ -215,7 +215,7 @@ instead of saving a configuration that cannot run.
 directory. It does not copy the EndNote library into this repository.
 
 **On Windows, the library `setup` writes is a fallback, not a pin.** Every `load_config` call
-(every CLI command, every lit-clean script run, and the MCP server's own startup) checks the
+(every CLI command, every lit-cleaner script run, and the MCP server's own startup) checks the
 registry for whichever library EndNote for Windows currently has open (`Recent Libraries\File1`,
 confirmed by a file-lock check — a merely recently used but now-closed library never counts) and
 prefers it over the stored path whenever they differ. Point `setup` at a library once; afterward,
