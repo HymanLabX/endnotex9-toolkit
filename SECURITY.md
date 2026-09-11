@@ -85,6 +85,21 @@ Three things changed as a result, in decreasing order of how much they matter:
   control that would have caught this, and it was skipped. It is not optional, and "the same
   columns already worked on another library" is not a substitute for it.
 
+**The same symptom had a second cause the ledger fix missed.** On a 1385-record library cleaned
+before that fix, rebuilding the ledger left column sorting exactly as broken. Checked against
+MyISAM's own rules (EndNote X9 embeds MySQL 4.1.22 as `libmysqld.dll`), the blocks themselves were
+illegal: `_mi_get_block_info` rejects a deleted block shorter than 20 bytes or not a multiple of 4,
+myisamchk rejects any block that does not start on a 4-byte boundary, and a deleted block's header
+is 20 bytes — type, length, next-pointer *and* prev-pointer, a doubly linked chain — not the 12
+this package had assumed. The old writer split a shrunk record's slack wherever the pad byte ran
+out, so 32 of that library's 35 deleted blocks were off the grid (390, 343, even 12 bytes long),
+and a full-table scan — which sorting needs — stopped at the first of them. Every table EndNote had
+written itself passed the same checks, `pdf_index`'s 179 deleted blocks included. Now
+`_terminating` frees only grid-aligned spans of at least 20 bytes, `_relink_free_chain` writes both
+links, `_verify_free_space` enforces all three shape rules, and `repair_free_space` re-lays a damaged
+record's blocks rather than only rewriting the ledger. The lesson above, sharpened: "every record
+reads back" and "the ledger balances" are both weaker claims than "MyISAM's own checks pass".
+
 **EndNote holding the library open during a commit is a real, unmitigated risk beyond what the
 above covers.** These tools write `refs.MYD`/`refs.MYI`/`.enl` directly, outside EndNote's own
 process. If EndNote still has the library open: the write may simply fail on a sharing conflict

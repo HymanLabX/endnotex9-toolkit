@@ -327,10 +327,13 @@ def library_with_a_chained_record(tmp_path: Path) -> tuple[Path, Path]:
     row1 = _row(1, title="Elastocaloric cooling", author="Li, D.", year="2022", notes="N" * 700)
     row2 = _row(2, title="Martensitic transformation", author="Smith, J.", year="2020")
 
-    chunk0, chunk1, chunk2 = row1[:300], row1[300:600], row1[600:]
+    # Sized so every block starts on MyISAM's 4-byte boundary, as in a real
+    # file: 13 + 299 = 312 and 11 + 301 = 312.
+    chunk0, chunk1, chunk2 = row1[:299], row1[299:600], row1[600:]
     pos_head = 0
     pos_mid = pos_head + 13 + len(chunk0)
     pos_last = pos_mid + 11 + len(chunk1)
+    assert pos_mid % 4 == 0 and pos_last % 4 == 0
 
     head = _first_block(len(row1), chunk0, pos_mid)
     mid = _middle_block(chunk1, pos_last)
@@ -374,10 +377,16 @@ def test_orphaned_continuation_blocks_are_reclaimed_as_deleted(library_with_a_ch
         pos += max(block.span, 1)
     assert pos == len(data)  # the whole file still walks cleanly to EOF
 
-    # the old middle/last blocks' file offsets must now be deleted blocks,
-    # not live, unreferenced type-11/type-9 blocks
-    assert blocks[pos_mid].deleted
-    assert blocks[pos_last].deleted
+    # the old middle/last blocks' file offsets must now lie inside deleted
+    # space (merged with the free space beside them), not in live,
+    # unreferenced type-11/type-9 blocks
+    assert _covering(blocks.values(), pos_mid).deleted
+    assert _covering(blocks.values(), pos_last).deleted
+
+
+def _covering(blocks, offset: int):
+    """The block whose span holds `offset`."""
+    return next(b for b in blocks if b.pos <= offset < b.pos + b.span)
 
 
 def test_chained_shrink_survives_the_files_self_verification(library_with_a_chained_record):
@@ -385,6 +394,54 @@ def test_chained_shrink_survives_the_files_self_verification(library_with_a_chai
     writeback.set_column(rdb, enl, {1: ""}, column="notes")
     writeback.set_column(rdb, enl, {1: "back again"}, column="notes")
     assert _read(rdb)[1]["notes"] == b"back again"
+
+
+# --------------------------------------------------------------------------
+# deleted blocks MyISAM itself will accept. `_mi_get_block_info` rejects a
+# deleted block shorter than 20 bytes or not a multiple of 4 as garbage, and
+# that aborts every full-table scan — which is what EndNote's column sorting
+# runs. An earlier version split slack wherever the pad byte stopped and
+# emitted 12-byte headers with no prev-pointer; a real library it cleaned
+# stopped sorting, and a ledger-only repair did not bring sorting back.
+# --------------------------------------------------------------------------
+
+
+def _deleted_blocks_obey_myisam(rdb: Path) -> None:
+    data = (rdb / "refs.MYD").read_bytes()
+    for block in _blocks(rdb / "refs.MYD"):
+        assert block.pos % writeback._ALIGN == 0, f"block at {block.pos} is off the 4-byte grid"
+        if block.deleted:
+            assert block.span >= writeback._MIN_BLOCK and block.span % writeback._ALIGN == 0
+    state = _myi_state(rdb)
+    walked, prev, pos = 0, writeback._FREE_LIST_END, state["dellink"]
+    while pos != writeback._FREE_LIST_END:
+        assert struct.unpack_from(">Q", data, pos + 12)[0] == prev, f"prev-pointer at {pos}"
+        prev, pos, walked = pos, struct.unpack_from(">Q", data, pos + 4)[0], walked + 1
+    assert walked == state["del"]
+
+
+def test_terminating_slack_always_splits_into_a_legal_pad_and_free_block():
+    payload = b"p" * 37
+    for span in range(44, 44 + 1200, writeback._ALIGN):  # real spans end on the grid
+        block, freed = writeback._terminating(True, payload, span)
+        assert len(block) + freed == span
+        assert block[3] <= writeback._MAX_PAD
+        assert freed == 0 or (freed >= writeback._MIN_BLOCK and freed % writeback._ALIGN == 0)
+
+
+def test_shrinking_leaves_only_deleted_blocks_myisam_accepts(library_with_a_bloated_record):
+    rdb, enl = library_with_a_bloated_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    assert any(b.deleted for b in _blocks(rdb / "refs.MYD"))
+    _deleted_blocks_obey_myisam(rdb)
+
+
+def test_chained_shrink_leaves_only_deleted_blocks_myisam_accepts(library_with_a_chained_record):
+    rdb, enl, _pos_mid, _pos_last = library_with_a_chained_record
+    writeback.set_column(rdb, enl, {1: ""}, column="notes")
+    writeback.set_column(rdb, enl, {2: "x" * 700}, column="notes")
+    writeback.set_column(rdb, enl, {2: ""}, column="notes")
+    _deleted_blocks_obey_myisam(rdb)
 
 
 # --------------------------------------------------------------------------
@@ -435,7 +492,8 @@ def test_reclaimed_continuation_blocks_all_join_the_free_chain(library_with_a_ch
 
     state = _myi_state(rdb)
     by_pos = {b.pos: b for b in _blocks(rdb / "refs.MYD")}
-    assert by_pos[pos_mid].deleted and by_pos[pos_last].deleted
+    assert _covering(by_pos.values(), pos_mid).deleted
+    assert _covering(by_pos.values(), pos_last).deleted
 
     walked, pos = [], state["dellink"]
     while pos != writeback._FREE_LIST_END:
@@ -447,7 +505,7 @@ def test_reclaimed_continuation_blocks_all_join_the_free_chain(library_with_a_ch
 
 
 def test_free_space_accumulates_across_separate_writes(library_with_a_chained_record):
-    """Each write pushes onto the existing chain instead of replacing it."""
+    """Free space from an earlier write stays accounted for in the next one."""
     rdb, enl, _pos_mid, _pos_last = library_with_a_chained_record
     writeback.set_column(rdb, enl, {1: ""}, column="notes")
     first = _myi_state(rdb)
@@ -598,6 +656,115 @@ def test_a_repaired_library_accepts_writes_again(library_with_a_bloated_record):
     writeback.repair_free_space(rdb, enl, dry_run=False)
     writeback.set_column(rdb, enl, {2: "x"}, column="custom_1")
     assert _read(rdb)[2]["custom_1"] == b"x"
+
+
+def _head_positions(rdb: Path) -> dict:
+    data = (rdb / "refs.MYD").read_bytes()
+    out = {}
+    for block in _blocks(rdb / "refs.MYD"):
+        if block.first and not block.deleted:
+            record = data[block.pos + block.header_len :][: block.data_len]
+            out[int.from_bytes(record[writeback.PACK_BITS :][:4], "little")] = block.pos
+    return out
+
+
+def _old_style_deleted_block(size: int) -> bytes:
+    """The pre-fix writer's filler: a 12-byte header, zero next-pointer, no prev."""
+    return b"\x00" + size.to_bytes(3, "big") + b"\x00" * (size - 4)
+
+
+@pytest.fixture
+def library_damaged_by_the_old_writer(tmp_path: Path) -> tuple[Path, Path]:
+    """Both shapes found in a real library the pre-fix writer had cleaned.
+
+    Record 1 shrank inside a whole-record block: the pad byte was filled to
+    255 and the rest became a deleted block starting off the 4-byte grid.
+    Record 3 is chained, and its head block ends off the grid with a deleted
+    block wedged before its last block. The ledger counts none of it.
+    """
+    rdb = tmp_path / "Lib.Data" / "rdb"
+    rdb.mkdir(parents=True)
+
+    small = _row(1, title="Elastocaloric cooling", author="Li, D.", notes="N" * 5)
+    span1 = len(_whole_block(_row(1, title="Elastocaloric cooling", notes="N" * 1000)))
+    pad = min(255, span1 - 4 - len(small) - 12)
+    body1 = b"\x03" + struct.pack(">H", len(small)) + bytes([pad]) + small + b"\x00" * pad
+    assert len(body1) % 4, "the fixture must reproduce an off-grid deleted block"
+    block1 = body1 + _old_style_deleted_block(span1 - len(body1))
+
+    block2 = _whole_block(_row(2, title="Martensitic transformation", author="Smith, J."))
+
+    row3 = _row(3, title="Shape memory materials", notes="M" * 700)
+    pos3 = len(block1) + len(block2)
+    chunk0, gap = row3[:301], 38  # 13 + 301 = 314 is off the grid; 314 + 38 = 352 is on it
+    head3 = _first_block(len(row3), chunk0, pos3 + 13 + len(chunk0) + gap)
+    block3 = head3 + _old_style_deleted_block(gap) + _last_block(row3[301:])
+
+    myd = block1 + block2 + block3
+    (rdb / "refs.MYD").write_bytes(myd)
+    (rdb / "refs.MYI").write_bytes(_myi(6, len(myd)))
+    (rdb / "refs.frm").write_bytes(b"fake frm")
+
+    enl = tmp_path / "Lib.enl"
+    with zipfile.ZipFile(enl, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("refs.MYD", myd)
+        z.writestr("refs.frm", b"fake frm")
+    return rdb, enl
+
+
+def _link_old_style(rdb: Path) -> None:
+    """What the ledger-only repair left: counts and next-pointers right,
+    block shapes untouched, no prev-pointers."""
+    data = bytearray((rdb / "refs.MYD").read_bytes())
+    myi = bytearray((rdb / "refs.MYI").read_bytes())
+    deleted = [b for b in _blocks(rdb / "refs.MYD") if b.deleted]
+    for i, block in enumerate(deleted):
+        nxt = deleted[i + 1].pos if i + 1 < len(deleted) else writeback._FREE_LIST_END
+        struct.pack_into(">Q", data, block.pos + 4, nxt)
+    struct.pack_into(">Q", myi, writeback._MYI_DELLINK, deleted[0].pos)
+    struct.pack_into(">Q", myi, writeback._MYI_DEL, len(deleted))
+    struct.pack_into(">Q", myi, writeback._MYI_EMPTY, sum(b.span for b in deleted))
+    (rdb / "refs.MYD").write_bytes(bytes(data))
+    (rdb / "refs.MYI").write_bytes(bytes(myi))
+
+
+def test_the_old_writers_blocks_are_refused_before_any_write(library_damaged_by_the_old_writer):
+    rdb, enl = library_damaged_by_the_old_writer
+    before = (rdb / "refs.MYD").read_bytes()
+    with pytest.raises(writeback.WritebackError, match="the library as found"):
+        writeback.set_column(rdb, enl, {2: "x"}, column="custom_1")
+    assert (rdb / "refs.MYD").read_bytes() == before
+
+
+def test_a_ledger_that_matches_illegal_blocks_is_still_refused(library_damaged_by_the_old_writer):
+    """The state a ledger-only repair left a real library in, still unsortable."""
+    rdb, _enl = library_damaged_by_the_old_writer
+    _link_old_style(rdb)
+    with pytest.raises(writeback.WritebackError, match="4-byte grid"):
+        writeback._verify_free_space(
+            (rdb / "refs.MYD").read_bytes(), (rdb / "refs.MYI").read_bytes(), "test"
+        )
+
+
+@pytest.mark.parametrize("ledger_already_patched", [False, True])
+def test_repair_relays_the_old_writers_blocks(
+    library_damaged_by_the_old_writer, ledger_already_patched
+):
+    rdb, enl = library_damaged_by_the_old_writer
+    if ledger_already_patched:
+        _link_old_style(rdb)
+    before, heads = _read(rdb), _head_positions(rdb)
+
+    result = writeback.repair_free_space(rdb, enl, dry_run=False)
+
+    assert result["repaired"] is True and result["was_consistent"] is False
+    assert result["records_relaid"] == 2
+    assert _read(rdb) == before  # every record byte-identical
+    assert _head_positions(rdb) == heads  # so every index entry still holds
+    _deleted_blocks_obey_myisam(rdb)
+    assert writeback.repair_free_space(rdb, enl)["was_consistent"] is True
+    writeback.set_column(rdb, enl, {3: "after repair"}, column="custom_1")
+    assert _read(rdb)[3]["custom_1"] == b"after repair"
 
 
 # --------------------------------------------------------------------------

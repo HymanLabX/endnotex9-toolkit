@@ -138,6 +138,19 @@ empty and its records happened never to take the shrink path. Neither held
 for the next library it met. `_verify_free_space` exists so that a
 mismatch fails the write instead of reaching EndNote.
 
+**The blocks have a shape too, and the ledger fix alone missed it.** A
+1385-record library cleaned before that fix still would not sort once its
+ledger was rebuilt. MyISAM (EndNote X9 embeds MySQL 4.1.22) requires every
+block to start on a 4-byte boundary, every deleted block to be at least 20
+bytes and a multiple of 4, and a deleted block's header to carry a
+prev-pointer as well as a next-pointer — 20 bytes, not 12. The old split put
+a shrunk record's excess slack wherever the pad byte ran out, so most of that
+library's deleted blocks were off the grid, and MyISAM's scanner gives up at
+the first one it meets. `_terminating` now frees only legal spans,
+`_relink_free_chain` writes both links, `_verify_free_space` checks the
+shape as well as the ledger, and `repair_free_space` re-lays the damaged
+records. See SECURITY.md.
+
 Every write verifies itself: the resulting file is walked block by block,
 every record is decoded again, the targets must hold exactly the intended
 value, every other record must be byte-identical to before, and the
@@ -262,42 +275,52 @@ def _chain(blocks_by_pos: dict, head) -> list:
 # A terminating block spends 4 bytes on its header (length plus one pad
 # byte), so its slack has to fit in that single byte.
 _MAX_PAD = 255
-# MyISAM never emits a block shorter than this, and keeps them 4-byte aligned.
+# MyISAM's MI_MIN_BLOCK_LENGTH and MI_DYN_ALIGN_SIZE. Every block starts on a
+# 4-byte boundary, and a deleted block must be at least 20 bytes long and a
+# whole number of 4-byte units: `_mi_get_block_info` rejects any other deleted
+# block as garbage, which aborts a full-table scan. See the module docstring.
 _MIN_BLOCK = 20
 _ALIGN = 4
-# A deleted (free) block's own header: 1 type byte + 3-byte length + 8-byte
-# next-pointer into MyISAM's free-block chain.
-_DELETED_BLOCK_HEADER = 12
-# MyISAM's `HA_OFFSET_ERROR`: the all-ones offset that ends the free chain.
-# Zero is emphatically not a stand-in — offset 0 is the first block in the
-# file — see `_deleted_block` and the module docstring.
+# MyISAM's MI_MAX_BLOCK_LENGTH: the most a 3-byte length holds, kept aligned.
+_MAX_BLOCK = ((1 << 24) - 1) & ~(_ALIGN - 1)
+# A deleted (free) block's own header, MI_DYN_DELETE_BLOCK_HEADER: 1 type byte
+# + 3-byte length + 8-byte next-pointer + 8-byte prev-pointer. The free chain
+# is doubly linked; MyISAM follows the prev-pointer whenever it unlinks a
+# block from the middle of the chain to reuse it.
+_DELETED_BLOCK_HEADER = 20
+# MyISAM's `HA_OFFSET_ERROR`: the all-ones offset that ends the free chain in
+# either direction. Zero is emphatically not a stand-in — offset 0 is the
+# first block in the file — see `_deleted_block` and the module docstring.
 _FREE_LIST_END = 0xFFFFFFFFFFFFFFFF
 
 
-def _deleted_block(size: int, next_pos: int) -> bytes:
+def _align_up(n: int) -> int:
+    return n + (-n) % _ALIGN
+
+
+def _deleted_block(size: int, next_pos: int, prev_pos: int) -> bytes:
     """A type-0 (deleted) block spanning exactly `size` bytes.
 
-    `next_pos` is this block's link in MyISAM's free-block chain, which is
-    what makes the span reusable rather than merely skippable; pass
-    `_FREE_LIST_END` for the last link. Emitting the block is only part of
-    the job — `del`, `empty` and `dellink` in the `.MYI` state header have
-    to move with it, which `_apply_free_blocks` does and
-    `_verify_free_space` refuses the write without.
+    `next_pos` and `prev_pos` are this block's links in MyISAM's doubly
+    linked free chain; pass `_FREE_LIST_END` at either end. Emitting the
+    block is only part of the job — `del`, `empty` and `dellink` in the
+    `.MYI` state header have to describe it too, which `_relink_free_chain`
+    does and `_verify_free_space` refuses the write without.
 
-    **`next_pos=0` is a bug, not a "no link" sentinel.** Offset 0 is a real
+    **A zero link is a bug, not a "no link" sentinel.** Offset 0 is a real
     position — the first block in the file — so a zero here points MyISAM's
     free-space reuse straight at record 1's head block. The sentinel is
-    `_FREE_LIST_END`, confirmed by reading EndNote's own deleted block on a
-    real library.
+    `_FREE_LIST_END`, confirmed by reading EndNote's own deleted blocks.
     """
-    if size < _DELETED_BLOCK_HEADER:
+    if size < _MIN_BLOCK or size % _ALIGN or size > _MAX_BLOCK:
         raise WritebackError(
-            f"a deleted-block filler needs at least {_DELETED_BLOCK_HEADER} bytes, got {size}"
+            f"a deleted block must span {_MIN_BLOCK}..{_MAX_BLOCK} bytes in multiples of "
+            f"{_ALIGN}, got {size}"
         )
     return (
         b"\x00"
         + size.to_bytes(3, "big")
-        + struct.pack(">Q", next_pos)
+        + struct.pack(">QQ", next_pos, prev_pos)
         + b"\x00" * (size - _DELETED_BLOCK_HEADER)
     )
 
@@ -312,23 +335,25 @@ def _terminating(is_head: bool, payload: bytes, span: int) -> tuple[bytes, int] 
     field past what it holds, the excess is left for the caller to turn into
     a deleted block — MyISAM's own answer to a record shrinking in place
     without moving its head block (and therefore its index entry).
-    `pad > _MAX_PAD` already guarantees more than `_DELETED_BLOCK_HEADER`
-    bytes to split off, since `_MAX_PAD > _DELETED_BLOCK_HEADER`.
+
+    That deleted block has to be one MyISAM accepts: at least `_MIN_BLOCK`
+    bytes and a multiple of `_ALIGN`. The span ends on a 4-byte boundary, so
+    freeing a multiple of 4 from its end also starts the block on one; the
+    pad byte absorbs whatever that rounding leaves over, which always fits
+    because `freed >= slack - _MAX_PAD`.
 
     The freed span is reported rather than filled in here because a deleted
-    block cannot be written in isolation: its next-pointer is a link in a
-    file-wide chain only `_apply_free_blocks` can see.
+    block cannot be written in isolation: its links belong to a file-wide
+    chain only `_relink_free_chain` can see.
     """
-    pad = span - 4 - len(payload)
-    if pad < 0:
+    slack = span - 4 - len(payload)
+    if slack < 0:
         return None
+    freed = 0 if slack <= _MAX_PAD else _align_up(max(_MIN_BLOCK, slack - _MAX_PAD))
+    pad = slack - freed
     kind = 3 if is_head else 9
-    if pad <= _MAX_PAD:
-        block = bytes([kind]) + struct.pack(">H", len(payload)) + bytes([pad]) + payload
-        return block + b"\x00" * pad, 0
-    target_pad = min(_MAX_PAD, pad - _DELETED_BLOCK_HEADER)
-    block = bytes([kind]) + struct.pack(">H", len(payload)) + bytes([target_pad]) + payload
-    return block + b"\x00" * target_pad, pad - target_pad
+    block = bytes([kind]) + struct.pack(">H", len(payload)) + bytes([pad]) + payload
+    return block + b"\x00" * pad, freed
 
 
 def _continuing(is_head: bool, chunk: bytes, row_len: int, next_pos: int) -> bytes:
@@ -344,50 +369,55 @@ def _continuing(is_head: bool, chunk: bytes, row_len: int, next_pos: int) -> byt
     return b"\x0b" + struct.pack(">H", len(chunk)) + struct.pack(">Q", next_pos) + chunk
 
 
-def _pack_chain(
-    chain: list, row: bytes, eof: int
-) -> tuple[list[tuple[int, bytes]], bytes, list[tuple[int, int]]]:
-    """Lay `row` into the chain's existing blocks, at their existing offsets.
+def _block_span(block) -> int:
+    return block.header_len + block.data_len + (block.pad or 0)
 
-    Every block is refilled to exactly the span it already occupied — that is
-    what keeps the following blocks, and therefore every index entry, valid.
-    Returns the in-place patches, any bytes still needing a new block at end
-    of file, and the `(pos, size)` spans this record gave back, for
-    `_apply_free_blocks` to turn into properly chained deleted blocks.
+
+def _pack_chain(
+    regions: list[tuple[int, int]], row: bytes, eof: int | None
+) -> tuple[list[tuple[int, bytes]], bytes, list[tuple[int, int]]]:
+    """Lay `row` into a record's `(pos, span)` regions, in chain order.
+
+    A region is normally one of the record's blocks, exactly as long as it
+    already is; `repair_free_space` also passes regions widened over the
+    free space that follows them. Every region is refilled to exactly its
+    span — that is what keeps the following blocks, and therefore every
+    index entry, valid. Returns the in-place patches, any bytes still needing
+    a new block at end of file (`eof` names where it will go; `None` means
+    the row must fit), and the `(pos, size)` spans this record gave back, for
+    `_relink_free_chain` to thread into the free chain.
     """
     patches: list[tuple[int, bytes]] = []
     freed: list[tuple[int, int]] = []
     remaining = row
 
-    for i, block in enumerate(chain):
-        span = block.header_len + block.data_len + (block.pad or 0)
+    for i, (pos, span) in enumerate(regions):
         is_head = i == 0
 
         done = _terminating(is_head, remaining, span)
         if done is not None:
             terminator, over = done
-            patches.append((block.pos, terminator))
+            patches.append((pos, terminator))
             if over:
-                freed.append((block.pos + len(terminator), over))
+                freed.append((pos + len(terminator), over))
             # The row fit before the chain's original end. Any blocks that
             # used to continue it are no longer reachable from anywhere —
             # not from this now-terminating block, and not from the free
             # list — so they'd sit in the file as unlinked garbage forever.
             # Give each one back as free space instead of leaving it
             # dangling.
-            for leftover in chain[i + 1 :]:
-                freed.append(
-                    (leftover.pos, leftover.header_len + leftover.data_len + (leftover.pad or 0))
-                )
+            freed.extend(regions[i + 1 :])
             return patches, b"", freed
 
         header = 13 if is_head else 11
         take = span - header
         if take <= 0:
-            raise WritebackError(f"block at {block.pos} spans {span} bytes, too small to re-chain")
+            raise WritebackError(f"block at {pos} spans {span} bytes, too small to re-chain")
         chunk, remaining = remaining[:take], remaining[take:]
-        next_pos = chain[i + 1].pos if i + 1 < len(chain) else eof
-        patches.append((block.pos, _continuing(is_head, chunk, len(row), next_pos)))
+        next_pos = regions[i + 1][0] if i + 1 < len(regions) else eof
+        if next_pos is None:
+            raise WritebackError(f"record at {regions[0][0]} no longer fits its own blocks")
+        patches.append((pos, _continuing(is_head, chunk, len(row), next_pos)))
 
     if not remaining:
         # Every block was refilled as a continuation but nothing is left to
@@ -396,44 +426,60 @@ def _pack_chain(
     return patches, remaining, freed
 
 
-def _apply_free_blocks(data: bytearray, myi: bytearray, freed: list[tuple[int, int]]) -> None:
-    """Turn reclaimed spans into deleted blocks, and record them in the `.MYI`.
+def _relink_free_chain(data: bytearray, myi: bytearray) -> None:
+    """Rebuild every deleted block's links, and the `.MYI` ledger, from the file.
 
     A deleted block is an entry in a file-wide ledger, not just a header:
-    MyISAM threads the blocks together through their own next-pointers from
-    `dellink`, and the state header counts them (`del`) and their bytes
-    (`empty`). Writing the block without the ledger leaves a file that reads
+    MyISAM threads the blocks into a doubly linked chain from `dellink`
+    through their own next- and prev-pointers, and the state header counts
+    them (`del`), their bytes (`empty`) and every block in the file
+    (`split`). Writing a block without the ledger leaves a file that reads
     back record-for-record correct while EndNote treats the table as
     damaged — see the module docstring.
 
-    New blocks are pushed onto the head of the chain, which is what MyISAM
-    itself does: each points at whatever `dellink` held, then becomes the
-    new `dellink`.
+    Rather than splice new blocks into whatever chain exists, this links
+    every deleted block in file order, merging adjacent ones the way MyISAM
+    does when it frees space next to a free block. MyISAM does not care
+    which order the chain runs in, and deriving it from the file every time
+    means no write can leave a stale link behind. Callers write reclaimed
+    spans as deleted blocks first.
     """
-    if not freed:
-        return
-    head = struct.unpack_from(">Q", myi, _MYI_DELLINK)[0]
-    count = struct.unpack_from(">Q", myi, _MYI_DEL)[0]
-    empty = struct.unpack_from(">Q", myi, _MYI_EMPTY)[0]
-    for pos, size in freed:
-        data[pos : pos + size] = _deleted_block(size, head)
-        head, count, empty = pos, count + 1, empty + size
-    struct.pack_into(">Q", myi, _MYI_DELLINK, head)
-    struct.pack_into(">Q", myi, _MYI_DEL, count)
-    struct.pack_into(">Q", myi, _MYI_EMPTY, empty)
+    runs: list[list[int]] = []
+    for block in _scan(bytes(data)):
+        if not block.deleted:
+            continue
+        if runs and sum(runs[-1]) == block.pos and runs[-1][1] + block.span <= _MAX_BLOCK:
+            runs[-1][1] += block.span
+        else:
+            runs.append([block.pos, block.span])
+    for i, (pos, size) in enumerate(runs):
+        next_pos = runs[i + 1][0] if i + 1 < len(runs) else _FREE_LIST_END
+        prev_pos = runs[i - 1][0] if i else _FREE_LIST_END
+        data[pos : pos + size] = _deleted_block(size, next_pos, prev_pos)
+    struct.pack_into(">Q", myi, _MYI_DELLINK, runs[0][0] if runs else _FREE_LIST_END)
+    struct.pack_into(">Q", myi, _MYI_DEL, len(runs))
+    struct.pack_into(">Q", myi, _MYI_EMPTY, sum(size for _, size in runs))
+    struct.pack_into(">Q", myi, _MYI_SPLIT, len(_scan(bytes(data))))
 
 
 def _verify_free_space(new_data: bytes, myi: bytes, where: str) -> None:
-    """Insist the `.MYI`'s free-space ledger matches the blocks really there.
+    """Insist the file's free space is laid out the way MyISAM requires.
 
     `_verify` reads every record back and compares it field by field, and a
-    file can pass that while still being wrong at this level: the records
-    are all intact, but `del`/`empty`/`dellink` describe a different set of
-    deleted blocks than the file holds. EndNote reacts to that by treating
-    the table as damaged — observed on a real library as column sorting
-    silently ceasing to work — and a free chain that reaches a live record's
-    head block is worse than that, since MyISAM would hand that space out
-    for reuse and overwrite a real record.
+    file can pass that while still being wrong at this level. Two ways were
+    met on real libraries, and EndNote reacted to both identically: column
+    sorting silently stopped working, since sorting scans the whole table and
+    MyISAM's scanner gives up at the first block it cannot accept.
+
+    * The ledger — `del`/`empty`/`dellink` — describing a different set of
+      deleted blocks than the file holds. A free chain reaching a live
+      record's head block is worse still: MyISAM would hand that space out
+      for reuse and overwrite a real record.
+    * The blocks breaking MyISAM's shape rules while the ledger agrees with
+      them: every block starts on the 4-byte grid, a deleted block is at
+      least `_MIN_BLOCK` bytes and a multiple of `_ALIGN`, and each deleted
+      block after the first points back at the one before it (the checks
+      `_mi_get_block_info` and myisamchk's `chk_del` apply).
 
     Run against the original file as well as the rewritten one, so a library
     that arrives inconsistent is reported as such instead of being blamed on
@@ -442,6 +488,17 @@ def _verify_free_space(new_data: bytes, myi: bytes, where: str) -> None:
     blocks = _scan(new_data)
     by_pos = {b.pos: b for b in blocks}
     deleted = [b for b in blocks if b.deleted]
+
+    for block in blocks:
+        if block.pos % _ALIGN:
+            raise WritebackError(
+                f"{where}: a block starts at {block.pos}, off MyISAM's 4-byte grid"
+            )
+        if block.deleted and (block.span < _MIN_BLOCK or block.span % _ALIGN):
+            raise WritebackError(
+                f"{where}: the deleted block at {block.pos} spans {block.span} bytes; MyISAM "
+                f"rejects one shorter than {_MIN_BLOCK} bytes or off the 4-byte grid"
+            )
 
     count = struct.unpack_from(">Q", myi, _MYI_DEL)[0]
     if count != len(deleted):
@@ -456,6 +513,7 @@ def _verify_free_space(new_data: bytes, myi: bytes, where: str) -> None:
         )
 
     seen: set[int] = set()
+    prev = None
     pos = struct.unpack_from(">Q", myi, _MYI_DELLINK)[0]
     while pos != _FREE_LIST_END:
         block = by_pos.get(pos)
@@ -470,8 +528,13 @@ def _verify_free_space(new_data: bytes, myi: bytes, where: str) -> None:
             )
         if pos in seen:
             raise WritebackError(f"{where}: the free chain loops back to {pos}")
+        if prev is not None and struct.unpack_from(">Q", new_data, pos + 12)[0] != prev:
+            raise WritebackError(
+                f"{where}: the deleted block at {pos} does not point back at {prev}, the block "
+                f"before it in the free chain"
+            )
         seen.add(pos)
-        pos = block.next_pos
+        prev, pos = pos, block.next_pos
     if len(seen) != len(deleted):
         raise WritebackError(
             f"{where}: {len(deleted)} deleted blocks exist but the free chain reaches "
@@ -544,26 +607,77 @@ def set_fields(
     return {**result, "columns": columns}
 
 
+def _relay_illegal_free_space(original: bytes, blocks: list, data: bytearray) -> int:
+    """Re-lay every record whose block runs into a deleted block MyISAM rejects.
+
+    Each run of adjacent deleted blocks holding an illegal one is handed to
+    the live block right before it, and that block's record is packed afresh
+    across its own chain with that block widened to the end of the run. The
+    pre-fix writer only ever left free space directly behind a block it had
+    just rewritten, so that neighbour is the record the space came from.
+    Legal deleted blocks stay where they are. Writes into `data` and returns
+    how many records were re-laid; the caller relinks the free chain.
+    """
+    by_pos = {b.pos: b for b in blocks}
+    owner: dict[int, int] = {}  # every live block's offset -> its record's head offset
+    for block in blocks:
+        if block.first and not block.deleted:
+            for link in _chain(by_pos, block):
+                owner[link.pos] = block.pos
+
+    widen: dict[int, int] = {}  # live block offset -> free bytes it absorbs
+    i = 0
+    while i < len(blocks):
+        j = i
+        while j < len(blocks) and blocks[j].deleted:
+            j += 1
+        run = blocks[i:j]
+        if any(b.pos % _ALIGN or b.span < _MIN_BLOCK or b.span % _ALIGN for b in run):
+            end = run[-1].pos + run[-1].span
+            if i == 0 or end % _ALIGN or blocks[i - 1].pos not in owner:
+                raise WritebackError(
+                    f"the deleted space at {run[0].pos}..{end} has no live block before it to "
+                    f"re-lay into; this is not the damage this repair understands"
+                )
+            widen[blocks[i - 1].pos] = end - run[0].pos
+        i = max(j, i + 1)
+
+    relaid = sorted({owner[pos] for pos in widen})
+    for head in relaid:
+        chain = _chain(by_pos, by_pos[head])
+        row = b"".join(myisam._body(original, b) for b in chain)[: by_pos[head].rec_len]
+        regions = [(b.pos, _block_span(b) + widen.get(b.pos, 0)) for b in chain]
+        patches, _overflow, freed = _pack_chain(regions, row, None)
+        for pos, payload in patches:
+            data[pos : pos + len(payload)] = payload
+        for pos, size in freed:
+            data[pos : pos + size] = _deleted_block(size, _FREE_LIST_END, _FREE_LIST_END)
+    return len(relaid)
+
+
 def repair_free_space(
     rdb_dir: str | Path,
     enl_path: str | Path,
     dry_run: bool = True,
 ) -> dict:
-    """Rebuild the free-space ledger from the blocks actually in `refs.MYD`.
+    """Put a library an earlier version of this module damaged back into a shape MyISAM accepts.
 
-    For a library an earlier version of this module left inconsistent: the
-    deleted blocks are all there and every record still reads back
-    correctly, but `del`/`empty`/`dellink` do not describe them and their
-    next-pointers were written as zero instead of being chained. EndNote
-    treats that as a damaged table; the symptom seen in the wild was column
-    sorting silently ceasing to work. See the module docstring.
+    Two generations of damage are handled, alone or together (see the module
+    docstring and SECURITY.md): a ledger — `del`/`empty`/`dellink` — that
+    never heard about the deleted blocks in the file, and deleted blocks
+    that break MyISAM's shape rules — off the 4-byte grid, under 20 bytes,
+    12-byte headers with no prev-pointer. EndNote shows both the same way:
+    column sorting silently stops working.
 
-    Only the ledger changes. Deleted blocks keep the positions and sizes
-    they already have, no record is moved or rewritten, and the repair is
-    refused unless every record in the result is byte-identical to before.
-    A library whose ledger is already correct is reported as needing
-    nothing. Defaults to a dry-run report; a real run backs the whole
-    library up first, exactly like a write.
+    A record whose block runs into an illegal deleted block is re-laid across
+    its own blocks, that one widened over the free space: its head block
+    keeps its offset, so every index entry stays valid, and the slack goes to
+    the pad byte or to a legal deleted block. The free chain is then rebuilt
+    from the file. The repair is refused unless every record in the result is
+    byte-identical to before and the result passes `_verify_free_space`. A
+    library that already passes is reported as needing nothing. Defaults to
+    a dry-run report; a real run backs the whole library up first, exactly
+    like a write.
     """
     rdb_dir, enl_path = Path(rdb_dir), Path(enl_path)
     myd_path, myi_path = rdb_dir / "refs.MYD", rdb_dir / "refs.MYI"
@@ -571,7 +685,8 @@ def repair_free_space(
 
     original = myd_path.read_bytes()
     myi = bytearray(myi_path.read_bytes())
-    deleted = [b for b in _scan(original) if b.deleted]
+    blocks = _scan(original)
+    deleted = [b for b in blocks if b.deleted]
 
     try:
         _verify_free_space(original, bytes(myi), "the library as found")
@@ -590,28 +705,13 @@ def repair_free_space(
         "dry_run": dry_run,
     }
     if already_consistent:
-        return {**report, "repaired": False}
+        return {**report, "repaired": False, "records_relaid": 0}
 
-    too_small = [b for b in deleted if b.span < _DELETED_BLOCK_HEADER]
-    if too_small:
-        raise WritebackError(
-            f"deleted blocks at {[b.pos for b in too_small]} are smaller than a "
-            f"{_DELETED_BLOCK_HEADER}-byte free-chain header; this is not the damage "
-            f"this repair understands"
-        )
-
-    # Chain them in file order — MyISAM does not care which order the free
-    # list runs in, and a deterministic one keeps the repair reproducible.
     data = bytearray(original)
-    ordered = sorted(deleted, key=lambda b: b.pos)
-    for i, block in enumerate(ordered):
-        nxt = ordered[i + 1].pos if i + 1 < len(ordered) else _FREE_LIST_END
-        data[block.pos : block.pos + block.span] = _deleted_block(block.span, nxt)
-    struct.pack_into(">Q", myi, _MYI_DELLINK, ordered[0].pos if ordered else _FREE_LIST_END)
-    struct.pack_into(">Q", myi, _MYI_DEL, len(ordered))
-    struct.pack_into(">Q", myi, _MYI_EMPTY, sum(b.span for b in ordered))
+    report["records_relaid"] = _relay_illegal_free_space(original, blocks, data)
+    _relink_free_chain(data, myi)
 
-    # Nothing above should have touched a record; insist on it.
+    # Nothing above may change what any record says; insist on it.
     _verify(bytes(data), original, {})
     _verify_free_space(bytes(data), bytes(myi), "after this repair")
 
@@ -700,10 +800,13 @@ def _write_rows(
 
     original = myd_path.read_bytes()
     myi = bytearray(myi_path.read_bytes())
-    # Before anything else: if the library's own free-space ledger is
-    # already inconsistent, this write is not the thing to blame and not the
-    # thing to layer on top of.
-    _verify_free_space(original, bytes(myi), "the library as found")
+    # Before anything else: if the library's free space is already not what
+    # MyISAM requires, this write is not the thing to blame and not the thing
+    # to layer on top of.
+    try:
+        _verify_free_space(original, bytes(myi), "the library as found")
+    except WritebackError as reason:
+        raise WritebackError(f"{reason} (writeback.repair_free_space can put this right)") from None
 
     blocks = _scan(original)
     by_pos = {block.pos: block for block in blocks}
@@ -733,19 +836,26 @@ def _write_rows(
         new_row = encode_row(row)
 
         eof = len(original) + len(appended)
-        patches, overflow, gave_back = _pack_chain(chain, new_row, eof)
+        regions = [(block.pos, _block_span(block)) for block in chain]
+        patches, overflow, gave_back = _pack_chain(regions, new_row, eof)
         for pos, payload in patches:
             data[pos : pos + len(payload)] = payload
         freed.extend(gave_back)
         if overflow:
+            if eof % _ALIGN:
+                raise WritebackError(
+                    f"refs.MYD ends at {eof}, off MyISAM's 4-byte grid, so no block can be "
+                    f"appended there"
+                )
             appended += _new_tail_block(overflow)
         written += 1
 
     data += appended
+    for pos, size in freed:
+        data[pos : pos + size] = _deleted_block(size, _FREE_LIST_END, _FREE_LIST_END)
 
     # State counters. Everything else in the header is left alone.
-    _apply_free_blocks(data, myi, freed)
-    struct.pack_into(">Q", myi, _MYI_SPLIT, len(_scan(bytes(data))))
+    _relink_free_chain(data, myi)
     struct.pack_into(">Q", myi, _MYI_DATA_FILE_LENGTH, len(data))
 
     _verify(bytes(data), original, updates)
