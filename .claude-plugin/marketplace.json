@@ -10,7 +10,7 @@
     {
       "name": "endnotex9",
       "source": "./",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "license": "MIT",
       "category": "productivity",
       "description": "One MCP server over an EndNote X9 library (search, full text, citations, backup-first field writeback) and five skills: lit-cleaner, lit-downloader, lit-classifier, lit-deep-reader, lit-review-writer. Requires uv; the library never leaves the machine.",

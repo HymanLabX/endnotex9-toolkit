@@ -1,6 +1,6 @@
 [project]
 name = "endnotex9-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "A local-first MCP server for searching, classifying, citing, and reading EndNote X9 libraries"
 requires-python = ">=3.10"
 readme = "README.md"
