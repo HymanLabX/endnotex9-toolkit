@@ -251,6 +251,7 @@ def test_server_starts_without_a_configuration(tmp_path, monkeypatch, capsys):
         raise FileNotFoundError("No configuration found. Run `endnotex9-toolkit setup` first.")
 
     monkeypatch.setattr(server, "_config", None)
+    monkeypatch.setattr(server, "_conn", None)
     monkeypatch.setattr(server, "load_config", missing)
     watched, ran = [], []
     monkeypatch.setattr(server, "watch_and_reindex", lambda *args, **kwargs: watched.append(args))
@@ -263,6 +264,9 @@ def test_server_starts_without_a_configuration(tmp_path, monkeypatch, capsys):
     assert "endnotex9-toolkit setup" in capsys.readouterr().err
     with pytest.raises(FileNotFoundError, match="endnotex9-toolkit setup"):
         server._get_config()
+    # The client must get that text too, not the SDK's bare "Error executing tool <name>".
+    with pytest.raises(Exception, match="endnotex9-toolkit setup"):
+        _call("library_stats", {})
 
     written_by_setup = Config(db_path=str(tmp_path / "library.db"))
     monkeypatch.setattr(server, "load_config", lambda: written_by_setup)

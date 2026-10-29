@@ -6,14 +6,17 @@ when to reach for a tool, not just what it does.
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 import sys
 import threading
 
 try:  # MCP SDK 2.x
     from mcp.server import MCPServer as _ServerClass
+    from mcp.server.mcpserver.exceptions import ToolError
 except ImportError:  # MCP SDK 1.x, where the same class was called FastMCP
     from mcp.server.fastmcp import FastMCP as _ServerClass
+    from mcp.server.fastmcp.exceptions import ToolError
 
 from . import (
     bibtex,
@@ -35,6 +38,28 @@ from .config import Config, load_config
 from .watcher import watch_and_reindex
 
 mcp = _ServerClass("EndNote X9 Library")
+
+
+def _tool(fn):
+    """Register `fn` as a tool whose failures reach the client with their message.
+
+    Those messages are this server's instructions on failure: an unknown or ambiguous
+    selector, setup not yet run, EndNote still holding the library, a field that cannot be
+    written. From MCP SDK 2.3 any exception but `ToolError` counts as a crash and the client
+    sees only "Error executing tool <name>", so every failure is raised as a `ToolError`.
+    """
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except Exception as exc:
+            raise ToolError(str(exc) or repr(exc)) from exc
+
+    return mcp.tool()(run)
+
 
 _conn: sqlite3.Connection | None = None
 _config: Config | None = None
@@ -91,7 +116,7 @@ def _resolve_batch(
 # --------------------------------------------------------------------------
 
 
-@mcp.tool()
+@_tool
 def search_references(
     queries: list[str],
     limit: int = 20,
@@ -138,7 +163,7 @@ def search_references(
     )
 
 
-@mcp.tool()
+@_tool
 def list_references(
     year_from: int | None = None,
     year_to: int | None = None,
@@ -184,7 +209,7 @@ def list_references(
     )
 
 
-@mcp.tool()
+@_tool
 def find_related(
     rec_number: int | None = None,
     limit: int = 10,
@@ -200,7 +225,7 @@ def find_related(
     return searchmod.find_related(_get_conn(), ref["rec_number"], limit=limit)
 
 
-@mcp.tool()
+@_tool
 def list_groups(include_empty: bool = True) -> list[dict]:
     """List the library's own EndNote groups, with their sizes.
 
@@ -216,7 +241,7 @@ def list_groups(include_empty: bool = True) -> list[dict]:
     return db.list_groups(_get_conn(), include_empty=include_empty)
 
 
-@mcp.tool()
+@_tool
 def list_topics() -> dict:
     """List the topic labels assigned to references, with their counts.
 
@@ -230,7 +255,7 @@ def list_topics() -> dict:
     return browse.topic_counts(_get_conn())
 
 
-@mcp.tool()
+@_tool
 def library_stats(top: int = 15) -> dict:
     """Summarise the whole library: size, year range, metadata coverage,
     reference types, languages, and the most frequent journals, authors and
@@ -242,7 +267,7 @@ def library_stats(top: int = 15) -> dict:
     return browse.library_stats(_get_conn(), top=top)
 
 
-@mcp.tool()
+@_tool
 def profile_library(top: int = 15, min_df: int = 2, max_terms: int = 50) -> dict:
     """Profile the corpus before proposing a classification taxonomy.
 
@@ -254,7 +279,7 @@ def profile_library(top: int = 15, min_df: int = 2, max_terms: int = 50) -> dict
     return profilemod.profile_library(_get_conn(), top=top, min_df=min_df, max_terms=max_terms)
 
 
-@mcp.tool()
+@_tool
 def sample_references(
     session_id: str | None = None,
     strategy: str = "random",
@@ -304,7 +329,7 @@ def sample_references(
 # --------------------------------------------------------------------------
 
 
-@mcp.tool()
+@_tool
 def create_classification_session(seed: int = 0, char_budget: int = 20000) -> dict:
     """Start a versioned classification session for the current library snapshot.
 
@@ -320,13 +345,13 @@ def create_classification_session(seed: int = 0, char_budget: int = 20000) -> di
     )
 
 
-@mcp.tool()
+@_tool
 def get_classification_session(session_id: str) -> dict:
     """Read the current state and immutable version hashes of a session."""
     return classification.get_session(_get_conn(), session_id)
 
 
-@mcp.tool()
+@_tool
 def save_classification_taxonomy(session_id: str, taxonomy: dict) -> dict:
     """Save a draft facet taxonomy.
 
@@ -338,7 +363,7 @@ def save_classification_taxonomy(session_id: str, taxonomy: dict) -> dict:
     return classification.save_taxonomy(_get_conn(), session_id, taxonomy)
 
 
-@mcp.tool()
+@_tool
 def approve_classification_taxonomy(session_id: str, taxonomy_hash: str) -> dict:
     """Approve the exact taxonomy hash the user reviewed.
 
@@ -348,7 +373,7 @@ def approve_classification_taxonomy(session_id: str, taxonomy_hash: str) -> dict
     return classification.approve_taxonomy(_get_conn(), session_id, taxonomy_hash)
 
 
-@mcp.tool()
+@_tool
 def save_classification_rules(session_id: str, ruleset: dict) -> dict:
     """Save bounded declarative rules for an approved taxonomy.
 
@@ -359,13 +384,13 @@ def save_classification_rules(session_id: str, ruleset: dict) -> dict:
     return classification.save_ruleset(_get_conn(), session_id, ruleset)
 
 
-@mcp.tool()
+@_tool
 def freeze_classification_rules(session_id: str, ruleset_hash: str) -> dict:
     """Freeze the exact rule version to make evaluation reproducible."""
     return classification.freeze_ruleset(_get_conn(), session_id, ruleset_hash)
 
 
-@mcp.tool()
+@_tool
 def evaluate_classification_rules(session_id: str) -> dict:
     """Evaluate the approved taxonomy and frozen rules over the library.
 
@@ -380,13 +405,13 @@ def evaluate_classification_rules(session_id: str) -> dict:
     )
 
 
-@mcp.tool()
+@_tool
 def list_unresolved_classifications(session_id: str) -> list[dict]:
     """List unresolved and conflicting records for LLM or human long-tail review."""
     return classification.list_unresolved(_get_conn(), session_id)
 
 
-@mcp.tool()
+@_tool
 def create_classification_audit(
     session_id: str,
     size: int = 50,
@@ -399,7 +424,7 @@ def create_classification_audit(
     )
 
 
-@mcp.tool()
+@_tool
 def submit_classification_audit(audit_set_id: str, labels: list[dict]) -> int:
     """Submit human-reviewed labels for an audit set.
 
@@ -409,7 +434,7 @@ def submit_classification_audit(audit_set_id: str, labels: list[dict]) -> int:
     return classification.submit_audit_labels(_get_conn(), audit_set_id, labels)
 
 
-@mcp.tool()
+@_tool
 def get_classification_report(audit_set_id: str) -> dict:
     """Report audit-set metrics only: coverage, conflicts and per-label scores.
 
@@ -418,7 +443,7 @@ def get_classification_report(audit_set_id: str) -> dict:
     return classification.classification_report(_get_conn(), audit_set_id)
 
 
-@mcp.tool()
+@_tool
 def prepare_classification_writeback(session_id: str, idempotency_key: str) -> dict:
     """Prepare a read-only Custom 1 writeback diff after audit completion.
 
@@ -441,7 +466,7 @@ def prepare_classification_writeback(session_id: str, idempotency_key: str) -> d
 # --------------------------------------------------------------------------
 
 
-@mcp.tool()
+@_tool
 def get_reference_details(
     rec_number: int | None = None,
     title: str | None = None,
@@ -455,7 +480,7 @@ def get_reference_details(
     return _resolve(rec_number=rec_number, title=title, doi=doi)
 
 
-@mcp.tool()
+@_tool
 def search_fulltext(queries: list[str], limit: int = 15, max_pages_per_ref: int = 3) -> list[dict]:
     """Search inside the text of attached PDFs, not just their metadata.
 
@@ -471,7 +496,7 @@ def search_fulltext(queries: list[str], limit: int = 15, max_pages_per_ref: int 
     )
 
 
-@mcp.tool()
+@_tool
 def read_pdf_pages(
     rec_number: int | None = None,
     title: str | None = None,
@@ -502,7 +527,7 @@ def read_pdf_pages(
 # --------------------------------------------------------------------------
 
 
-@mcp.tool()
+@_tool
 def get_citation(
     rec_number: int | None = None,
     style: str = "apa7",
@@ -519,7 +544,7 @@ def get_citation(
     )
 
 
-@mcp.tool()
+@_tool
 def get_bibliography(
     rec_numbers: list[int] | None = None,
     style: str = "apa7",
@@ -535,7 +560,7 @@ def get_bibliography(
     return citation.format_bibliography(refs, style=style)
 
 
-@mcp.tool()
+@_tool
 def get_bibtex(
     rec_numbers: list[int] | None = None,
     include_abstract: bool = False,
@@ -570,7 +595,7 @@ def _reindex_after_write(config: Config) -> None:
         indexer.build_index(config.endnote_xml, conn, full=False, library_path=config.library_path)
 
 
-@mcp.tool()
+@_tool
 def update_reference_fields(updates: list[dict], dry_run: bool = True) -> dict:
     """Fill in or correct text fields, the author list, or the keyword list.
 
@@ -635,7 +660,7 @@ def update_reference_fields(updates: list[dict], dry_run: bool = True) -> dict:
     return result
 
 
-@mcp.tool()
+@_tool
 def mark_references(
     rec_numbers: list[int],
     marker: str,
@@ -680,7 +705,7 @@ def mark_references(
 # --------------------------------------------------------------------------
 
 
-@mcp.tool()
+@_tool
 def rebuild_index(full: bool = False) -> dict:
     """Re-index the library.
 
@@ -706,7 +731,7 @@ def rebuild_index(full: bool = False) -> dict:
     return stats
 
 
-@mcp.tool()
+@_tool
 def index_pdfs(
     rec_numbers: list[int] | None = None,
     force: bool = False,
