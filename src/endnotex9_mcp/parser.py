@@ -61,6 +61,9 @@ _DOI_PREFIXES = (
     "doi:",
     "doi ",
 )
+# Web of Science imports put the article number in the DOI field too, on a
+# line of its own ahead of the DOI: "ARTN 170291\r10.1016/j.jallcom...".
+_ARTICLE_NUMBER = re.compile(r"^artn\s+\S+\s*", re.IGNORECASE)
 _FORBIDDEN_XML_DECLARATION = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
 _XML_SCAN_TAIL = 32
 
@@ -153,15 +156,29 @@ def _safe_iterparse(xml_path: str | Path, *, events: tuple[str, ...], tag: str):
     return context, reader
 
 
-def normalize_doi(raw: str) -> str:
-    """Strip the assorted prefixes EndNote records leave on a DOI."""
-    doi = raw.strip()
+def _strip_doi_prefix(doi: str) -> str:
     lowered = doi.lower()
     for prefix in _DOI_PREFIXES:
         if lowered.startswith(prefix):
-            doi = doi[len(prefix) :].strip()
-            break
+            return doi[len(prefix) :].strip()
     return doi
+
+
+def normalize_doi(raw: str) -> str:
+    """Strip the assorted prefixes EndNote records leave on a DOI.
+
+    The field can hold several lines. A Web of Science article-number line
+    (`ARTN 170291`) is not part of the DOI and is dropped: left in, two
+    copies of one paper carry different DOIs and deduplication misses them.
+    The first remaining line that looks like a DOI wins, else the first
+    remaining line.
+    """
+    lines = []
+    for line in re.split(r"[\r\n]+", raw):
+        line = _strip_doi_prefix(_ARTICLE_NUMBER.sub("", line.strip()))
+        if line:
+            lines.append(line)
+    return next((line for line in lines if line.startswith("10.")), lines[0] if lines else "")
 
 
 def _clean_serial_number(raw: str) -> str:

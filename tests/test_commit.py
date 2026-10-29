@@ -181,6 +181,15 @@ def test_title_and_abstract_are_plain_text_fields(library):
     assert row["abstract"] == b"A corrected abstract."
 
 
+def test_doi_is_a_plain_text_field(library):
+    rdb, enl = library
+    result = commit.update_reference_fields(
+        rdb, enl, {1: {"doi": "10.1016/j.actamat.2020.106545"}}, dry_run=False
+    )
+    assert result["records_written"] == 1
+    assert _read(rdb)[1]["electronic_resource_number"] == b"10.1016/j.actamat.2020.106545"
+
+
 def test_author_and_keywords_are_list_fields(library):
     rdb, enl = library
 

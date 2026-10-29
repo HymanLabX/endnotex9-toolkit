@@ -51,6 +51,17 @@ def test_pdf_attachment_keeps_its_folder_id(conn):
     assert db.get_reference(conn, 2)["pdf_files"] == []
 
 
+def test_article_number_line_is_not_part_of_the_doi():
+    doi = "10.1016/j.jallcom.2023.170291"
+    assert parser.normalize_doi(f"ARTN 170291\r{doi}") == doi
+    assert parser.normalize_doi(f"Artn 042902\r{doi}") == doi
+    assert parser.normalize_doi(f"ARTN s12598-023-02374-1\r\n{doi}") == doi
+    assert parser.normalize_doi(f"ARTN 170291 {doi}") == doi
+    assert parser.normalize_doi(f"ARTN 170291\rhttps://doi.org/{doi}") == doi
+    assert parser.normalize_doi("ARTN 170291") == ""
+    assert parser.normalize_doi("") == ""
+
+
 def test_serial_number_is_cleaned():
     assert parser._clean_serial_number("1878-0180 (Electronic)\r1878-0180 (Linking)") == "1878-0180"
 

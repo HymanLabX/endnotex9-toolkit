@@ -16,8 +16,8 @@ For ordinary bugs, open a public issue with a synthetic reproducer and redacted 
 
 Almost the entire public MCP surface reads EndNote source files and prepares writeback previews;
 it does not commit. Two tools are the narrow exception: `update_reference_fields` (volume, issue,
-pages, article number, number of volumes, journal, notes, title, abstract, the author list, the
-keyword list) and `mark_references` (a marker string into Custom 2–7, for building an EndNote
+pages, article number, number of volumes, journal, notes, title, abstract, DOI, the author list,
+the keyword list) and `mark_references` (a marker string into Custom 2–7, for building an EndNote
 Smart Group — never a delete). Neither can touch any other column, and neither can delete a
 record; `custom_1` stays reserved for the classification writeback preview above, which still has
 no commit path of its own.
@@ -48,8 +48,10 @@ was also checked empirically rather than assumed: the real library's `DbSortedRe
 already stale by roughly 160 records from an earlier round of manual deletions in EndNote, with no
 ill effect on later normal use. `title` and `abstract` were added last; `abstract` is not on
 EndNote's sort menu at all, and `title` is the one entry on that menu this allowlist covers, so it
-got the same key-root read described above rather than reuse of the author/journal reasoning. See
-`writeback.py`'s module docstring for the full record of this.
+got the same key-root read described above rather than reuse of the author/journal reasoning.
+`electronic_resource_number` (DOI) came after that, checked the same way plus a search of every
+`rdb`/`tdb` table for DOI strings: the only other hit was PDF body text in `pdf_index`, not a copy
+of the field. See `writeback.py`'s module docstring for the full record of this.
 
 Both write tools default to `dry_run=True` (diff only, nothing written) and, on a real commit,
 always back up the whole library to a fresh timestamped folder before touching anything — see

@@ -13,6 +13,9 @@ Two-source waterfall per field, same as the proven session run:
   volume/issue/pages/article_number/number_of_volumes/abstract/title
                      -> local blank -> CrossRef fill only (no local source).
   keywords           -> strip the "X-MOL" import-noise token.
+  doi                -> rewrite to the bare DOI when the field carries more
+                        (a Web of Science `ARTN <n>` line, a doi.org URL);
+                        the ARTN value moves to a blank article number.
   notes               -> cleared only once author or journal was actually
                         recovered from it.
 
@@ -52,6 +55,8 @@ def build_updates(rows, crossref_data):
     updates = {}
     stats = {
         "keywords_xmol": 0,
+        "doi_cleaned": 0,
+        "article_number_from_artn": 0,
         "author_from_notes": 0,
         "author_from_crossref": 0,
         "author_completed_from_crossref": 0,
@@ -83,6 +88,18 @@ def build_updates(rows, crossref_data):
         if any(k.lower() == "x-mol" for k in keywords):
             fields["keywords"] = [k for k in keywords if k.lower() != "x-mol"]
             stats["keywords_xmol"] += 1
+
+        raw_doi = common.text(row, "electronic_resource_number")
+        artn = common.article_number_of(raw_doi)
+        # Only when what is left is a DOI, or an ARTN line is what was
+        # stripped: normalize_doi keeps just the first line of anything else,
+        # and dropping the rest of an unrecognised field is not a cleanup.
+        if raw_doi != doi and (doi.startswith("10.") or artn):
+            fields["doi"] = doi
+            stats["doi_cleaned"] += 1
+        if artn and not common.text(row, "section"):
+            fields["article_number"] = artn
+            stats["article_number_from_artn"] += 1
 
         note_fixed_something = False
         has_abbrev = any(common.is_abbrev_author(a) for a in authors)
@@ -178,7 +195,7 @@ def build_updates(rows, crossref_data):
                 if v:
                     fields["pages"] = v
                     stats["pages_filled"] += 1
-            if not common.text(row, "section"):
+            if not common.text(row, "section") and "article_number" not in fields:
                 v = (message.get("article-number") or "").strip()
                 if v:
                     fields["article_number"] = v

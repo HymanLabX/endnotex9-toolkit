@@ -231,6 +231,36 @@ def test_the_xmol_import_token_is_stripped_from_keywords():
     assert stats["keywords_xmol"] == 1
 
 
+def test_an_artn_line_leaves_the_doi_field_and_fills_a_blank_article_number():
+    rows = {1: _row(1, electronic_resource_number="ARTN 170291\r10.1016/j.x.2023.170291")}
+    updates, stats, _ = metadata.build_updates(rows, {})
+    assert updates[1] == {"doi": "10.1016/j.x.2023.170291", "article_number": "170291"}
+    assert stats["doi_cleaned"] == 1
+    assert stats["article_number_from_artn"] == 1
+
+
+def test_an_existing_article_number_is_not_replaced_by_the_artn_value():
+    rows = {1: _row(1, section="e170291", electronic_resource_number="Artn 170291\r10.1016/j.x.1")}
+    updates, _stats, _ = metadata.build_updates(rows, {})
+    assert updates[1] == {"doi": "10.1016/j.x.1"}
+
+
+def test_the_artn_value_beats_crossref_for_a_blank_article_number():
+    rows = {1: _row(1, electronic_resource_number="ARTN 170291\r10.1/x")}
+    updates, _stats, _ = metadata.build_updates(rows, {"10.1/x": {"article-number": "999"}})
+    assert updates[1]["article_number"] == "170291"
+
+
+def test_a_clean_doi_or_an_unrecognised_field_is_left_alone():
+    rows = {
+        1: _row(1, electronic_resource_number="10.1/x"),
+        2: _row(2, electronic_resource_number="see publisher site\rno doi yet"),
+    }
+    updates, stats, _ = metadata.build_updates(rows, {})
+    assert updates == {}
+    assert stats["doi_cleaned"] == 0
+
+
 def test_a_failed_crossref_lookup_is_ignored_rather_than_written():
     rows = {1: _row(1, author="Zhu, X.", electronic_resource_number="10.1/x")}
     updates, _stats, _ = metadata.build_updates(rows, {"10.1/x": "ERROR"})
@@ -292,6 +322,14 @@ def test_merge_takes_fields_the_survivor_lacks_but_never_notes():
     assert fields["volume"] == "7"
     assert fields["keywords"] == ["a", "b"]
     assert "notes" not in fields
+
+
+def test_merge_carries_over_a_bare_doi_the_survivor_lacks():
+    rows = {
+        1: _row(1, link_to_pdf="internal-pdf://9/a.pdf"),
+        2: _row(2, electronic_resource_number="ARTN 12\r10.1/x"),
+    }
+    assert dedup.build_merge(rows, keep_rec=1, delete_rec=2)["doi"] == "10.1/x"
 
 
 # --------------------------------------------------------------------------

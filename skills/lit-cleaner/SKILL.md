@@ -1,6 +1,6 @@
 ---
 name: lit-cleaner
-description: Clean up an EndNote X9 library through endnotex9-mcp -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /lit-cleaner, or asks to clean, dedupe, or fix up their EndNote library's metadata.
+description: Clean up an EndNote X9 library through endnotex9-mcp -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract/DOI), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /lit-cleaner, or asks to clean, dedupe, or fix up their EndNote library's metadata.
 ---
 
 # lit-cleaner
@@ -10,7 +10,9 @@ Three capabilities over the library configured for this project's `endnotex9-mcp
 same way the MCP server does, so there is nothing to configure separately):
 
 1. **metadata** — fill in or correct volume/issue/pages/article number/number of volumes/journal/
-   author list/keyword list/notes/title/abstract. `year` is permanently out of scope: it is a
+   author list/keyword list/notes/title/abstract, and rewrite a DOI field that carries more than
+   the DOI (a Web of Science `ARTN <n>` line, a doi.org URL) to the bare DOI, moving the ARTN
+   value into a blank article number. `year` is permanently out of scope: it is a
    MyISAM index key and this project has no B-tree write capability (see `writeback.py`'s module
    docstring and the 2026-08 spike recorded in `SECURITY.md` — real, but stopped short of a
    working insert/delete/rebalance implementation).

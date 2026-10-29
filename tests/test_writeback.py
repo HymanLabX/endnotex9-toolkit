@@ -792,6 +792,15 @@ def test_writes_title_and_abstract(library):
     assert row["abstract"] == b"A corrected abstract."
 
 
+def test_writes_the_doi_column(library):
+    """Not a key, not a term list, and copied into no other table."""
+    rdb, enl = library
+    writeback.set_fields(
+        rdb, enl, {1: {"electronic_resource_number": "10.1016/j.actamat.2020.106545"}}
+    )
+    assert _read(rdb)[1]["electronic_resource_number"] == b"10.1016/j.actamat.2020.106545"
+
+
 def test_writes_author_journal_keywords_and_notes(library):
     """The term-list-backed columns, verified safe by reading terms.MYD directly."""
     rdb, enl = library

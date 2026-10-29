@@ -89,6 +89,9 @@ def build_merge(rows, keep_rec, delete_rec):
     for field, column in MERGE_TEXT_FIELDS.items():
         keep_val = common.text(keep_row, column)
         delete_val = common.text(delete_row, column)
+        if field == "doi":
+            # Carry over the bare DOI, never an `ARTN ...` line with it.
+            keep_val, delete_val = common.doi_of(keep_row), common.doi_of(delete_row)
         if not keep_val and delete_val:
             fields[field] = delete_val
     for field, column in commit.LIST_FIELDS.items():

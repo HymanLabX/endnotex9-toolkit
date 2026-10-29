@@ -576,7 +576,8 @@ def update_reference_fields(updates: list[dict], dry_run: bool = True) -> dict:
     Each item of `updates` needs `rec_number` plus one or more fields.
     Plain-text fields take a string: `volume`, `issue`, `pages`,
     `article_number`, `number_of_volumes`, `journal`, `notes`, `title`,
-    `abstract`. `author` and `keywords` take a list of strings and replace
+    `abstract`, `doi` (the bare DOI, e.g. `10.1016/j.actamat.2020.106545`).
+    `author` and `keywords` take a list of strings and replace
     the whole list, e.g. `[{"rec_number": 42, "volume": "14", "issue": "3",
        "author": ["Zerovnik, Andrej", "Dall'Olio, Stefano"]}]`.
     No other field may be set this way — `year` cannot be changed at all

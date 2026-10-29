@@ -73,6 +73,15 @@ def doi_of(row):
     return parser.normalize_doi(text(row, "electronic_resource_number"))
 
 
+def article_number_of(raw_doi):
+    """The `ARTN` value a Web of Science import left in the DOI field, or ""."""
+    for line in re.split(r"[\r\n]+", raw_doi):
+        m = re.match(r"\s*artn\s+(\S+)", line, re.I)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def has_pdf(row):
     """Whether `row` has a usable PDF attachment.
 

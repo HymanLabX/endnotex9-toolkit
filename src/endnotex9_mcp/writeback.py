@@ -98,8 +98,24 @@ byte level to settle it directly:
   staleness. `abstract` is stronger still — it is not even on EndNote's
   sort-menu list, so the sort-cache question does not apply to it at all.
 
-Treat a first real run of any of these seven (bibliographic, author/
-journal/keyword/notes, or title/abstract) against a *different* library as
+**`electronic_resource_number` (DOI)** came after those, once a Web of
+Science import left 151 records of a 1241-record library holding
+`ARTN <article number>\\r<DOI>` in it instead of a bare DOI. It was checked
+read-only against that library:
+
+* The row codec has no `FIXED_WIDTHS` entry for it, so it is a
+  variable-length text column encoded exactly like `title`.
+* It is not a key (the two-key `refs.MYI` read above accounts for every
+  page), not named by any `TermListSpec` row, and not on the sort menu.
+* Nothing else in the library holds a copy of it. Every `rdb` and `tdb`
+  file was searched for DOI strings. The only other hit was
+  `pdf_index.MYD`, and that was the DOI printed on the attached PDF's first
+  page (`https://doi.org/...` inside the extracted body text), not the
+  field: a record without a PDF matched `refs.MYD` alone, and no
+  `ARTN ...\\r10.` field value appears in `pdf_index` at all.
+
+Treat a first real run of any of these (bibliographic, author/
+journal/keyword/notes, title/abstract, or DOI) against a *different* library as
 unproven until it has been exercised against a throwaway copy of that
 library and that copy reopens in EndNote with no "needs repair" prompt,
 sorts normally, and searches normally — see `backup_library` and
@@ -204,7 +220,9 @@ __all__ = [
 # structure these columns need to stay in sync with. `title`/`abstract` were
 # verified last, `title` via a byte-level read of the real `refs.MYI` that
 # accounts for both of the library's two keys (`id`, `yearIndex`) and finds
-# `title` in neither — see the module docstring.
+# `title` in neither — see the module docstring. `electronic_resource_number`
+# (DOI) was checked the same way, plus a search showing no other table keeps
+# a copy of it.
 WRITABLE_COLUMNS = frozenset(
     {
         "custom_1",
@@ -226,6 +244,7 @@ WRITABLE_COLUMNS = frozenset(
         "keywords",
         "title",
         "abstract",
+        "electronic_resource_number",
     }
 )
 

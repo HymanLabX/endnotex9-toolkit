@@ -5,8 +5,8 @@ indexed, not tied back to a term list, not a sort key). This module adds the
 *policy* half on top, for three purposes:
 
 * filling in or correcting ordinary text fields — bibliographic fields like
-  volume/issue/pages, the journal name, notes, the title, and the abstract
-  — that import left blank or wrong;
+  volume/issue/pages, the journal name, notes, the title, the abstract, and
+  the DOI — that import left blank or wrong;
 * correcting the author list and keyword list, the two fields that back
   EndNote's own Authors/Keywords term lists, verified safe by reading
   `terms.MYD` directly (see `writeback.py`'s module docstring for the
@@ -50,6 +50,7 @@ TEXT_FIELDS = {
     "notes": "notes",
     "title": "title",
     "abstract": "abstract",
+    "doi": "electronic_resource_number",
 }
 
 # Same idea for fields EndNote stores as several values joined by
