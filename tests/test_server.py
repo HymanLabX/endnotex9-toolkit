@@ -243,6 +243,32 @@ def test_server_watcher_receives_the_direct_library_path(tmp_path, monkeypatch):
     assert calls == [("", config.db_path, config.library_path)]
 
 
+def test_server_starts_without_a_configuration(tmp_path, monkeypatch, capsys):
+    # A server that exits before the handshake reaches the user only as "connection closed".
+    # Staying up lets the first tool call say what is missing, and lets setup take effect
+    # without restarting the server.
+    def missing():
+        raise FileNotFoundError("No configuration found. Run `endnotex9-mcp setup` first.")
+
+    monkeypatch.setattr(server, "_config", None)
+    monkeypatch.setattr(server, "load_config", missing)
+    watched, ran = [], []
+    monkeypatch.setattr(server, "watch_and_reindex", lambda *args, **kwargs: watched.append(args))
+    monkeypatch.setattr(server.mcp, "run", lambda: ran.append(True))
+
+    server.main()
+
+    assert ran == [True]
+    assert watched == []
+    assert "endnotex9-mcp setup" in capsys.readouterr().err
+    with pytest.raises(FileNotFoundError, match="endnotex9-mcp setup"):
+        server._get_config()
+
+    written_by_setup = Config(db_path=str(tmp_path / "library.db"))
+    monkeypatch.setattr(server, "load_config", lambda: written_by_setup)
+    assert server._get_config() is written_by_setup
+
+
 def test_classification_workflow_round_trip_is_read_only(wired):
     session = _payload(
         _call(

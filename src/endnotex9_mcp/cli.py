@@ -19,6 +19,7 @@ from .config import (
     detect_open_library,
     load_config,
     save_config,
+    setup_command,
 )
 from .indexer import build_index, index_groups
 
@@ -173,7 +174,7 @@ def doctor_report() -> dict:
             _doctor_check(
                 "config",
                 "fail",
-                f"No configuration found; run `endnotex9-mcp setup` ({path})",
+                f"No configuration found at {path}; run {setup_command()}",
             )
         )
         return {"ok": False, "config_path": str(path), "checks": checks}

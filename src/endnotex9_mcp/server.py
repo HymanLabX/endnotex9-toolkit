@@ -7,6 +7,7 @@ when to reach for a tool, not just what it does.
 from __future__ import annotations
 
 import sqlite3
+import sys
 import threading
 
 try:  # MCP SDK 2.x
@@ -738,9 +739,18 @@ def index_pdfs(
 
 
 def main() -> None:
-    config = _get_config()
-    if config.watch:
-        watch_and_reindex(config.endnote_xml, config.db_path, library_path=config.library_path)
+    try:
+        config = _get_config()
+    except FileNotFoundError as exc:
+        # Start regardless. A server that exits here reaches the user as a bare "connection
+        # closed" in their agent, with nothing saying why. One that stays up puts the same
+        # message in front of them on the first tool call, and serves the library as soon as
+        # setup writes a configuration, since `_get_config` retries until a load succeeds.
+        # Only the background re-index watcher waits for the next launch.
+        print(f"endnotex9-mcp: {exc}", file=sys.stderr)
+    else:
+        if config.watch:
+            watch_and_reindex(config.endnote_xml, config.db_path, library_path=config.library_path)
     mcp.run()
 
 

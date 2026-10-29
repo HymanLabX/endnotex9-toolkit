@@ -136,6 +136,23 @@ def test_missing_config_points_at_the_wizard(tmp_path: Path, monkeypatch):
         config.load_config()
 
 
+def test_setup_command_outside_a_plugin_tree_is_the_bare_command(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(config, "_SOURCE_ROOT", tmp_path)
+    assert config.setup_command() == "`endnotex9-mcp setup`"
+
+
+def test_missing_config_inside_a_plugin_names_the_uv_command(tmp_path: Path, monkeypatch):
+    # A plugin user has no `endnotex9-mcp` on PATH, so the hint has to be runnable as given.
+    plugin = tmp_path / "plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(config, "_SOURCE_ROOT", plugin)
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path / "empty")
+    with pytest.raises(FileNotFoundError) as excinfo:
+        config.load_config()
+    assert f'uv run --directory "{plugin}" --extra pdf endnotex9-mcp setup' in str(excinfo.value)
+
+
 # --------------------------------------------------------------------------
 # detect_open_library / load_config's live override
 # --------------------------------------------------------------------------

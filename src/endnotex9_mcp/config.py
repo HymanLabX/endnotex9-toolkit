@@ -46,6 +46,29 @@ def config_path() -> Path:
     return config_dir() / "config.yaml"
 
 
+# The repository root when this package runs from a source tree: a clone, or the plugin
+# directory an agent starts the server from with `uv run --directory`. Under a wheel install it
+# is merely some directory above site-packages, which carries no plugin manifest.
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def setup_command() -> str:
+    """Name the setup invocation that works for the way this copy was installed.
+
+    The plugin starts the server through `uv run --directory <plugin>`, so a plugin user has no
+    `endnotex9-mcp` on PATH and the bare command fails for them. A source tree carrying the
+    plugin manifest may be that plugin directory or a clone someone pip-installed, so both
+    spellings are given rather than guessing which.
+    """
+    bare = "`endnotex9-mcp setup`"
+    if not (_SOURCE_ROOT / ".claude-plugin" / "plugin.json").is_file():
+        return bare
+    return (
+        f"{bare} (installed as a plugin: "
+        f'`uv run --directory "{_SOURCE_ROOT}" --extra pdf endnotex9-mcp setup`)'
+    )
+
+
 # HKCU\<this>\File1 is EndNote for Windows's most-recently-used library,
 # most recent first — see detect_open_library().
 _ENDNOTE_RECENT_LIBRARIES_KEY = r"Software\ISI ResearchSoft\EndNote\Recent Libraries"
@@ -202,9 +225,7 @@ def default_pdf_dir(endnote_xml: str) -> str:
 def load_config() -> Config:
     path = config_path()
     if not path.exists():
-        raise FileNotFoundError(
-            f"No configuration found at {path}. Run `endnotex9-mcp setup` first."
-        )
+        raise FileNotFoundError(f"No configuration found at {path}. Run {setup_command()} first.")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     # Ignore unknown keys so a config written by a newer version still loads.
     known = {f.name for f in fields(Config)}
