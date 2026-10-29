@@ -12,8 +12,8 @@ to a third-party service.
 > `endnotex9-mcp crosscheck` before trusting a later EndNote version. Almost every MCP tool is
 > read-only. Two tools — `update_reference_fields` and `mark_references` — can write to the
 > library, and only to a narrow, pre-verified set of columns: bibliographic fields (volume,
-> issue, pages, article number, number of volumes), journal, notes, title, abstract, the author
-> list, the keyword list, or the unused Custom 2–7 fields. `year` cannot be changed at all — it
+> issue, pages, article number, number of volumes), journal, notes, title, abstract, DOI, the
+> author list, the keyword list, or the unused Custom 2–7 fields. `year` cannot be changed at all — it
 > is a MyISAM index key. Both default to a no-op preview (`dry_run=True`) and back
 > up the whole library before any real write. See [Safety model](#safety-model).
 
@@ -26,8 +26,8 @@ to a third-party service.
 - Reproducible, review-gated classification with taxonomy, rules, evidence, conflict handling,
   holdout audits, and a read-only `Custom 1` writeback preview.
 - Two narrow, backup-first write tools: correcting text fields (volume, issue, pages, article
-  number, number of volumes, journal, notes, title, abstract, the author list, the keyword list),
-  and tagging records in Custom 2–7 so the user can bulk-act on them with an EndNote Smart Group.
+  number, number of volumes, journal, notes, title, abstract, DOI, the author list, the keyword
+  list), and tagging records in Custom 2–7 so the user can bulk-act on them with an EndNote Smart Group.
 - Incremental PDF text extraction, full-text search, and page-range reading by title or EndNote
   record number.
 - Consistent record-number, title, and DOI selectors with ambiguity reporting instead of
@@ -42,7 +42,7 @@ state and extracted PDF text live in a separate local SQLite index. `prepare_cla
 only produces a fingerprinted preview; there is still no commit path for the `Custom 1` topic field.
 
 Two tools do write to the library: `update_reference_fields` (volume, issue, pages, article
-number, number of volumes, journal, notes, title, abstract, author list, keyword list; `year`
+number, number of volumes, journal, notes, title, abstract, DOI, author list, keyword list; `year`
 cannot be changed — see below) and `mark_references` (a
 marker string into Custom 2–7, meant to drive an EndNote Smart Group rather than delete anything
 directly — this server never deletes a record). Both share the same guardrails:
@@ -149,8 +149,15 @@ back up the whole library first, and still refuse to run while EndNote holds the
 Then run the one-time setup so the server knows which library to read:
 
 ```bash
-uv run --directory <plugin-dir> endnotex9-mcp setup
+uv run --directory <plugin-dir> --extra pdf endnotex9-mcp setup
 ```
+
+`--extra pdf` matches the environment the plugin starts the server in, so setup also finishes
+building it. Building that environment is what makes a first launch slow: on a machine with an
+empty uv cache it can take longer than 30 seconds, which is as long as Claude Code waits for an
+MCP server to connect. If the `endnotex9` server shows as failed right after installing, run
+setup, then reconnect it (`/mcp` in Claude Code) or start a new session. Before setup has run the
+server still starts; every tool answers with the setup command instead of data.
 
 `/plugin` and `codex plugin list` both report the installed directory; on a source checkout, use
 the checkout root instead and point the marketplace at `.` (`/plugin marketplace add .`,
@@ -162,7 +169,7 @@ The plugin ships five skills. Claude Code exposes them as slash commands; Codex 
 | Skill | What it does |
 |---|---|
 | `/lit-cleaner` | Fill in or correct metadata, merge duplicates, tidy orphaned PDFs and old backups. |
-| `/lit-downloader` | Download, verify, and natively attach full-text PDFs to selected records (Windows). |
+| `/lit-downloader` | Download, verify, and natively attach full-text PDFs to selected records; or build a new collection from a Web of Science search into an EndNote import file with the PDFs already inside the library (Windows). |
 | `/lit-classifier` | Profile, propose a taxonomy, write bounded rules, audit, and preview the `Custom 1` writeback. |
 | `/lit-deep-reader` | Close-read one paper from its attached PDF at triage/standard/deep depth, verify its claims against the full text, and optionally save a note into its Notes field. |
 | `/lit-review-writer` | Write a review over one slice of the library — a group, a research direction, a lab, or one researcher — with every claim carrying the record it came from, and a coverage ledger beside it. |
@@ -180,6 +187,13 @@ write still goes through that tool's dry-run-then-confirm gate.
 pywinauto); its own SKILL.md gives the `uv run --extra lit-downloader …` form. It drives the
 Microsoft Edge already installed on the machine (`channel="msedge"`), so Playwright has no browser
 to download.
+
+Its new-collection mode (`scripts/collection/`) takes a search from export to import: merge and
+tier the exports by topic rules, trim them, fetch open-access copies, open the remaining
+publisher links in the user's own Chrome one at a time (ScienceDirect at most 100 a day, every
+site stopped at its first block page), and write an RIS file whose `internal-pdf://` links
+EndNote keeps on import. The library's database is never written, but the PDFs are copied into
+its `<Library>.Data/PDF` folder ahead of the import, which the user runs.
 
 ## Install as a plain package
 
@@ -339,7 +353,7 @@ declarative and bounded; arbitrary Python, SQL, and regular-expression execution
 
 | Tool | Purpose |
 |---|---|
-| `update_reference_fields` | Fill in or correct volume, issue, pages, article number, number of volumes, journal, notes, title, abstract, the author list, or the keyword list. Defaults to a `dry_run` diff preview; `dry_run=False` backs up the library and commits. |
+| `update_reference_fields` | Fill in or correct volume, issue, pages, article number, number of volumes, journal, notes, title, abstract, DOI, the author list, or the keyword list. Defaults to a `dry_run` diff preview; `dry_run=False` backs up the library and commits. |
 | `mark_references` | Tag records in Custom 2–7 with a marker (e.g. for an EndNote Smart Group to bulk-delete against). Same `dry_run`/backup pattern; never deletes anything itself. |
 
 See [Safety model](#safety-model) for exactly what these tools can and cannot touch.
@@ -397,9 +411,10 @@ See [the architecture guide](docs/architecture.md) for module boundaries and
 - EndNote groups and smart groups are read-only; `mark_references` writes a Custom-field marker
   for the user to build a Smart Group from, but does not create or edit one itself.
 - Writing is limited to `update_reference_fields`'s text/list-field allowlist (volume, issue,
-  pages, article number, number of volumes, journal, notes, author, keywords) and Custom 2–7 via
-  `mark_references`; there is still no commit path for `Custom 1`, no field beyond those
-  allowlists (title and year stay read-only), and no record-deletion capability at all.
+  pages, article number, number of volumes, journal, notes, title, abstract, DOI, author,
+  keywords) and Custom 2–7 via `mark_references`; there is still no commit path for `Custom 1`,
+  no field beyond those allowlists (`year` stays read-only: it is a MyISAM index key, and changing
+  it needs real B-tree writes), and no record-deletion capability at all.
 - Writing `author`/`journal`/`keywords` does not update EndNote's Author/Journals/Keywords term
   lists; run Tools/References → Define Term Lists → Update List in EndNote afterward if stale
   autocomplete entries matter to you.

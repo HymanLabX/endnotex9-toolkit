@@ -10,8 +10,8 @@ MCP stdio 的客户端可以通过它检索文献、读取现有分组、设计�
 > 直接读取功能以 EndNote X9 为测试目标。EndNote 的底层表格式没有公开文档；使用
 > 更高版本时，请先运行 `endnotex9-mcp crosscheck`。绝大多数 MCP 工具是只读的。
 > 只有 `update_reference_fields` 和 `mark_references` 两个工具能写入文献库，且仅限于
-> 已验证安全的一小类字段（卷号/期号/页码等书目字段、期刊、Notes、作者列表、关键词
-> 列表，或未使用的 Custom 2–7 字段）。两者默认只预览不写入（`dry_run=True`），真正
+> 已验证安全的一小类字段（卷号/期号/页码等书目字段、期刊、Notes、标题、摘要、DOI、
+> 作者列表、关键词列表，或未使用的 Custom 2–7 字段）。两者默认只预览不写入（`dry_run=True`），真正
 > 写入前会先备份整个文献库。详见下方“安全边界”。
 
 ## 主要功能
@@ -33,7 +33,7 @@ MCP stdio 的客户端可以通过它检索文献、读取现有分组、设计�
 带文件指纹的只读预览，`custom_1`（主题分类字段）没有提交通道。
 
 有两个工具真正会写入文献库：`update_reference_fields`（卷号、期号、页码、文章编号、
-卷数、期刊、Notes、标题、摘要、作者列表、关键词列表）和 `mark_references`（往 Custom
+卷数、期刊、Notes、标题、摘要、DOI、作者列表、关键词列表）和 `mark_references`（往 Custom
 2–7 写入标记文本，用来配合 EndNote 智能分组做批量筛选——本项目本身从不删除任何条目）。
 `year`（年份）完全不可写——它是文献库仅有的两个 MyISAM 索引键之一，改索引值意味着要在
 B-tree 里删旧键插新键，不是简单地原地改字节。2026年8月做过一次只读的探路实验，直接在
@@ -125,8 +125,14 @@ writable_roots = ["D:\\Research"]   # 存放 .enl 及其 .Data 目录的文件�
 随后执行一次初始化，让 server 知道要读哪个文献库：
 
 ```bash
-uv run --directory <插件目录> endnotex9-mcp setup
+uv run --directory <插件目录> --extra pdf endnotex9-mcp setup
 ```
+
+加上 `--extra pdf` 是为了与插件启动 server 所用的环境一致，这样初始化会顺带把环境建好。首次启动
+慢就慢在建环境：在 uv 缓存为空的机器上可能超过 30 秒，而这正是 Claude Code 等待 MCP server
+连接的上限。如果刚装完插件就看到 `endnotex9` 连接失败，先执行上面的初始化，再重连它（Claude Code
+里用 `/mcp`）或新开一个会话。初始化之前 server 也能启动，只是每个工具都会回复这条初始化命令，
+而不是返回数据。
 
 `/plugin` 与 `codex plugin list` 都会显示插件的安装目录；如果直接使用源码检出，把检出根目录当作
 插件目录，并把 marketplace 指向 `.`（`/plugin marketplace add .`、`codex plugin marketplace add .`）。
@@ -136,7 +142,7 @@ uv run --directory <插件目录> endnotex9-mcp setup
 | 技能 | 作用 |
 |---|---|
 | `/lit-cleaner` | 补全或纠正元数据、合并重复条目、清理孤儿 PDF 与旧备份。 |
-| `/lit-downloader` | 为选中的记录下载、校验并原生附加全文 PDF（仅 Windows）。 |
+| `/lit-downloader` | 为选中的记录下载、校验并原生附加全文 PDF；或者把一次 Web of Science 检索做成新的文献集，生成 PDF 已放进库内的 EndNote 导入文件（仅 Windows）。 |
 | `/lit-classifier` | 画像、提出分类体系、编写受限规则、抽样审计，并生成 `Custom 1` 只读回写预览。 |
 | `/lit-deep-reader` | 基于附件 PDF 按 triage/standard/deep 三档精读单篇文献，对照全文核验其结论，可选择把笔记写回该记录的 Notes 字段。 |
 | `/lit-review-writer` | 针对库中的一个切片——某个分组、某个研究方向、某个课题组或某位研究者——撰写综述：每条论断都带上其来源记录号，并随文交付覆盖清单。 |
@@ -151,6 +157,11 @@ uv run --directory <插件目录> endnotex9-mcp setup
 `lit-downloader` 仅支持 Windows，依赖 `lit-downloader` 这个 extra（Playwright、PyMuPDF、
 pywinauto），具体命令见其 SKILL.md；它驱动机器上已安装的 Microsoft Edge（`channel="msedge"`），
 Playwright 不需要另外下载浏览器。
+
+它的「新文献集」模式（`scripts/collection/`）负责从检索导出到导入的全过程：按课题规则合并、分档、
+精简，先下载开放获取版本，再在用户自己的 Chrome 里逐篇打开出版商链接（ScienceDirect 每天最多 100 篇，
+任何网站一出现验证页就停），最后生成 RIS 文件，其中的 `internal-pdf://` 链接 EndNote 导入时会原样保留。
+整个过程不写文献库的数据库，但 PDF 会预先复制进 `<文献库>.Data/PDF` 附件目录；导入由用户自己操作。
 
 ## 安装
 
@@ -276,7 +287,7 @@ python -m build
 - EndNote 分组目前只读；`mark_references` 只写入 Custom 字段标记供用户自建智能分组，
   不会自动创建或编辑分组。
 - 写入能力仅限 `update_reference_fields` 允许清单里的字段（卷号、期号、页码、文章
-  编号、卷数、期刊、Notes、标题、摘要、作者、关键词）和 Custom 2–7；`custom_1` 没有
+  编号、卷数、期刊、Notes、标题、摘要、DOI、作者、关键词）和 Custom 2–7；`custom_1` 没有
   提交通道，`year`（年份）因为是 MyISAM 索引键，需要真正的 B-tree 写入能力才能改，
   这次没做通，清单之外的任何字段都不可写，且完全不提供删除条目的能力。
 - 写入 `author`/`journal`/`keywords` 不会同步更新 EndNote 的作者/期刊/关键词词表；
