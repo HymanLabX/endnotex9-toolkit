@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
 import hashlib
 import json
 import os
@@ -49,7 +50,7 @@ from job_store import JobStore  # noqa: E402
 from retrieval import download_pdf, resolve_oa_candidates  # noqa: E402
 
 from endnotex9_mcp import config as configmod  # noqa: E402
-from endnotex9_mcp import groups, refstable  # noqa: E402
+from endnotex9_mcp import groups, parser, refstable  # noqa: E402
 
 MAX_CAPTURE_BYTES = 200 * 1024 * 1024
 
@@ -78,6 +79,14 @@ PUBLISHER_SELECTORS = (
         ("journals.aps.org",),
         ('a[href*="/pdf/" i]',),
     ),
+    (
+        ("pubs.aip.org",),
+        ("a.article-pdfLink", 'a[href*="/article-pdf/" i]'),
+    ),
+    (
+        ("pubs.rsc.org",),
+        ('a[href*="/articlepdf/" i]',),
+    ),
 )
 
 GENERIC_PDF_SELECTORS = (
@@ -95,7 +104,7 @@ def text(value: object) -> str:
 
 
 def normalize_doi(value: object) -> str:
-    value = text(value).strip().casefold()
+    value = parser.normalize_doi(text(value)).casefold()
     value = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi\s*:\s*)", "", value)
     return value.rstrip(". ")
 
@@ -181,14 +190,20 @@ def visible_texts(window) -> set[str]:
 
 
 def _list_row_texts(list_view, index: int) -> set[str]:
+    """Cell texts of one row, reading only the columns the list really has.
+
+    EndNote fills its reference list on demand, so every cell read runs
+    EndNote's own code. Probing a fixed 16 subitems of a 7-column list
+    crashed EndNote X9 (Bld 12062) twice in a row with an access violation
+    inside EndNote.exe; reading only the columns the header reports did not.
+    The header answers that count without calling into EndNote at all.
+    """
     values: set[str] = set()
-    for subitem in range(16):
+    for subitem in range(max(1, list_view.column_count())):
         try:
             item = list_view.get_item(index, subitem)
             value = item.text().strip()
         except Exception:
-            if subitem >= 4:
-                break
             continue
         if value:
             values.add(value)
@@ -254,6 +269,27 @@ def _click_if_visible(locator) -> bool:
     return False
 
 
+_WOS_NO_RESULTS = re.compile(r"Your search found no results", re.I)
+
+
+def title_pattern(title: object) -> re.Pattern:
+    """Match a title however WoS renders its spacing, dashes and punctuation.
+
+    Exact text never matched a title holding a narrow no-break space or an
+    en dash where WoS shows a plain one, and each miss cost the full browser
+    timeout. Letters and digits must still appear in the same order.
+    """
+    tokens = re.findall(r"[^\W_]+", text(title))
+    return re.compile(r"[\W_]*".join(map(re.escape, tokens)), re.I)
+
+
+def _visible(locator) -> bool:
+    try:
+        return bool(locator.count()) and locator.first.is_visible()
+    except Exception:
+        return False
+
+
 def _search_wos(page, doi: str, title: str, timeout_ms: int):
     page.goto(
         "https://webofscience.clarivate.cn/wos/woscc/basic-search",
@@ -262,20 +298,39 @@ def _search_wos(page, doi: str, title: str, timeout_ms: int):
     )
     _click_if_visible(page.get_by_role("button", name=re.compile("Accept all", re.I)))
 
-    field_button = page.locator("button").filter(has_text=re.compile(r"^\s*Topic\s*$"))
-    field_button.first.click(timeout=timeout_ms)
-    page.get_by_text("DOI", exact=True).last.click(timeout=timeout_ms)
+    # The form is already on screen, so a missing control is a changed page,
+    # not a slow one: fail in seconds instead of the whole browser timeout.
+    form_ms = min(timeout_ms, 30_000)
+    # WoS remembers the last field searched, so after the first record the
+    # dropdown already reads DOI and there is no "Topic" button to find.
+    field_button = page.locator("button").filter(
+        has_text=re.compile(r"^\s*(Topic|All Fields|DOI)\s*$")
+    )
+    field_button.first.wait_for(state="visible", timeout=form_ms)
+    if field_button.first.inner_text().strip() != "DOI":
+        field_button.first.click(timeout=form_ms)
+        page.get_by_text("DOI", exact=True).last.click(timeout=form_ms)
     search_box = page.locator('input[name="search-main-box"]')
     search_box.fill(doi)
     page.locator('button[type="submit"]').click()
 
-    result_title = page.get_by_text(title, exact=True)
-    result_title.first.wait_for(state="visible", timeout=timeout_ms)
+    result_title = page.get_by_text(title_pattern(title))
+    no_results = page.get_by_text(_WOS_NO_RESULTS)
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not _visible(result_title):
+        if _visible(no_results):
+            raise RuntimeError("Web of Science has no record for this DOI.")
+        if time.monotonic() > deadline:
+            raise RuntimeError("Web of Science did not show a result with this title.")
+        page.wait_for_timeout(250)
     link = result_title.first.locator("xpath=ancestor-or-self::a[1]")
     (link if link.count() else result_title.first).click()
 
-    publisher = page.get_by_text(re.compile("Full text at publisher", re.I))
-    publisher.first.wait_for(state="visible", timeout=timeout_ms)
+    # WoS labels the link-out "Full text at publisher" or, for open-access
+    # records, "Free Full Text from Publisher". A record without one never
+    # grows it, so this is a form-sized wait too.
+    publisher = page.get_by_text(re.compile(r"full text (?:at|from) publisher", re.I))
+    publisher.first.wait_for(state="visible", timeout=form_ms)
     old_pages = set(page.context.pages)
     publisher.first.click()
     deadline = time.monotonic() + timeout_ms / 1000
@@ -349,14 +404,53 @@ def publisher_selectors(url: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*specialized, *GENERIC_PDF_SELECTORS]))
 
 
+_LINK_OUT_HOSTS = ("webofscience", "clarivate", "doi.org")
+_CHALLENGE = re.compile(r"just a moment|verify you are human|attention required|请稍候", re.I)
+_PDF_CONTROL_WAIT_SECONDS = 45
+
+
+def on_publisher_page(url: str) -> bool:
+    """Whether a WoS link-out tab has reached the publisher (not blank, not a redirect hop)."""
+    host = (urlparse(url).hostname or "").casefold()
+    return bool(host) and not any(hop in host for hop in _LINK_OUT_HOSTS)
+
+
+def _wait_until(page, condition, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        page.wait_for_timeout(500)
+    return condition()
+
+
+def _showing_challenge(page) -> bool:
+    try:
+        return bool(_CHALLENGE.search(page.title())) or _visible(page.get_by_text(_CHALLENGE))
+    except Exception:
+        return False
+
+
 def download_from_publisher(page, timeout_seconds: int) -> tuple[bytes, str]:
+    # "Full text at publisher" opens a blank tab that hops through WoS's own
+    # link-out pages and doi.org first. Looking for a PDF control there, once,
+    # failed every record the first time this ran against a real library.
+    if not _wait_until(page, lambda: on_publisher_page(page.url), timeout_seconds):
+        raise RuntimeError("Web of Science's publisher link never reached the publisher.")
     page.wait_for_load_state("domcontentloaded", timeout=timeout_seconds * 1000)
+    # A human-verification page is the user's to pass; give them the time.
+    if _showing_challenge(page) and not _wait_until(
+        page, lambda: not _showing_challenge(page), timeout_seconds
+    ):
+        raise RuntimeError("The publisher is showing a CAPTCHA the user has not completed.")
     _click_if_visible(page.get_by_role("button", name=re.compile("Accept|Agree", re.I)))
     candidates = [
         page.get_by_text(re.compile(r"^\s*(?:View|Download)\s+PDF\s*$", re.I)),
         page.get_by_role("link", name=re.compile("PDF", re.I)),
         *(page.locator(selector) for selector in publisher_selectors(page.url)),
     ]
+    # Publisher pages draw their PDF controls with script after load.
+    _wait_until(page, lambda: any(_visible(c) for c in candidates), _PDF_CONTROL_WAIT_SECONDS)
     errors = []
     for candidate in candidates:
         try:
@@ -364,7 +458,7 @@ def download_from_publisher(page, timeout_seconds: int) -> tuple[bytes, str]:
                 return capture_pdf_response(page, candidate.first, timeout_seconds)
         except RuntimeError as exc:
             errors.append(str(exc))
-    detail = errors[-1] if errors else "no visible PDF control"
+    detail = errors[-1] if errors else f"no visible PDF control on {urlparse(page.url).hostname}"
     raise RuntimeError(f"The publisher page did not expose a usable PDF link: {detail}")
 
 
@@ -470,14 +564,117 @@ def save_staging(data: bytes, url: str, rec_number: int) -> Path:
     return path
 
 
-def attach_with_endnote(window, list_view, selected_index: int, pdf_path: Path):
+_LVM_SETITEMSTATE = 0x1000 + 43
+_LVIF_STATE = 0x0008
+_LVIS_FOCUSED = 0x0001
+_LVIS_SELECTED = 0x0002
+
+
+class _LVItemState(ctypes.Structure):
+    """The leading LVITEM fields LVM_SETITEMSTATE reads.
+
+    They sit at the same offsets in the 32- and 64-bit layouts, so this is
+    safe to hand 32-bit EndNote from 64-bit Python.
+    """
+
+    _fields_ = [
+        (name, ctypes.c_uint) for name in ("mask", "iItem", "iSubItem", "state", "stateMask")
+    ]
+
+
+def set_row_selected(list_view, index: int, selected: bool) -> None:
+    """Select or clear one list row (index -1: every row), as a click would.
+
+    Only LVM_SETITEMSTATE is sent; the list control then notifies EndNote
+    itself. pywinauto's select()/deselect() additionally forge an
+    LVN_ITEMCHANGED for the parent in 64-bit NMLISTVIEW layout, which 32-bit
+    EndNote reads misaligned, and clearing a selection that way meant one
+    call per row: 1,236 of them before every attachment.
+    """
+    from pywinauto.remote_memory_block import RemoteMemoryBlock
+
+    flags = _LVIS_FOCUSED | _LVIS_SELECTED
+    item = _LVItemState(mask=_LVIF_STATE, state=flags if selected else 0, stateMask=flags)
+    remote = RemoteMemoryBlock(list_view)
+    try:
+        remote.Write(item)
+        if not list_view.send_message(_LVM_SETITEMSTATE, index, remote):
+            raise RuntimeError(f"EndNote's reference list refused to change row {index}.")
+    finally:
+        del remote
+
+
+_LVM_GETNEXTITEM = 0x1000 + 12
+_LVNI_SELECTED = 0x0002
+
+
+def selected_rows(list_view) -> list[int]:
+    """Indices the list control reports selected (pointer-free messages only)."""
+    count, found, index = list_view.item_count(), [], -1
+    while len(found) <= count:
+        index = list_view.send_message(_LVM_GETNEXTITEM, index, _LVNI_SELECTED)
+        if not 0 <= index < count:
+            break
+        found.append(index)
+    return found
+
+
+def _row_shows(list_view, index: int, target: dict, rows: list[dict]) -> bool:
+    """Whether list row `index` shows `target` and could not be another record."""
+    if not 0 <= index < list_view.item_count():
+        return False
+    match = _match_row(_list_row_texts(list_view, index), rows)
+    return match is not None and int(match["id"]) == int(target["id"])
+
+
+def locate_row(list_view, hint: int, target: dict, rows: list[dict]) -> int:
+    """The list row showing `target`, starting from where it was when selected.
+
+    Attaching a PDF can move a record when the list is sorted by the
+    attachment column, so a row index taken at selection time can point at a
+    different record by the time it is used. Clicking it would attach a PDF
+    to the wrong reference. Search outward from the old position instead.
+    """
+    for index in sorted(range(list_view.item_count()), key=lambda i: abs(i - hint)):
+        if _row_shows(list_view, index, target, rows):
+            return index
+    raise RuntimeError("The record is no longer shown in EndNote's reference list.")
+
+
+def _title_column(list_view, index: int, title: object) -> int:
+    wanted = normalize_title(title)
+    for column in range(max(1, list_view.column_count())):
+        try:
+            if normalize_title(list_view.get_item(index, column).text()) == wanted:
+                return column
+        except Exception:
+            continue
+    raise RuntimeError("Keep the Title column visible in EndNote's reference list.")
+
+
+def click_row(window, list_view, index: int, column: int) -> None:
+    """Pick one reference the way a user does: a real click on its title cell.
+
+    EndNote follows only selection that comes from input. A row selected with
+    LVM_SETITEMSTATE is highlighted by the list control, yet EndNote kept its
+    own current reference: the Attach File button stayed disabled with a
+    batch still selected, and a new attachment was not saved until a real
+    click moved to another record. The title cell rather than the row's
+    middle, because some columns (Rating) change the record when clicked.
+    """
     window.set_focus()
-    list_view.set_focus()
-    for index in range(list_view.item_count()):
-        if index != selected_index:
-            list_view.get_item(index).deselect()
-    list_view.get_item(selected_index).select()
-    window.child_window(control_id=32803).wrapper_object().click()
+    list_view.get_item(index, column).click_input(where="text")
+    time.sleep(0.5)
+
+
+def attach_with_endnote(window, list_view, index: int, title: object, pdf_path: Path):
+    column = _title_column(list_view, index, title)
+    click_row(window, list_view, index, column)
+    if selected_rows(list_view) != [index]:
+        raise RuntimeError("EndNote did not select just the target record; nothing attached.")
+    attach_button = window.child_window(control_id=32803)
+    attach_button.wait("enabled", timeout=10)
+    attach_button.wrapper_object().click()
 
     dialog = window.app.window(title_re="Select a file to link to the reference.*")
     dialog.wait("visible", timeout=15)
@@ -488,21 +685,20 @@ def attach_with_endnote(window, list_view, selected_index: int, pdf_path: Path):
     dialog.child_window(control_id=1, class_name="Button").click()
     dialog.wait_not("visible", timeout=30)
 
+    # EndNote copies the file at once but keeps the new link in the open
+    # reference until the user moves to another one: refs.MYD stayed
+    # untouched for over a minute, and was written the moment a real click
+    # picked another record. Not clicked back afterwards, since saving can
+    # re-sort the list and the old index may then be someone else's row.
     if list_view.item_count() > 1:
-        other = 0 if selected_index else 1
-        list_view.get_item(selected_index).deselect()
-        list_view.get_item(other).select()
-        time.sleep(1)
-        list_view.get_item(other).deselect()
-        list_view.get_item(selected_index).select()
+        neighbour = index + 1 if index + 1 < list_view.item_count() else index - 1
+        click_row(window, list_view, neighbour, column)
 
 
 def restore_selection(list_view, indices: list[int]) -> None:
-    for index in range(list_view.item_count()):
-        if index in indices:
-            list_view.get_item(index).select()
-        else:
-            list_view.get_item(index).deselect()
+    set_row_selected(list_view, -1, False)
+    for index in indices:
+        set_row_selected(list_view, index, True)
 
 
 def wait_for_attachment(rdb_dir: Path, rec_number: int, before: set[str]) -> list[str]:
@@ -541,6 +737,10 @@ def classify_failure(error: object) -> str:
     if any(token in message for token in ("captcha", "sign in", "login", "access denied", "sso")):
         return "needs_user_auth"
     return "retryable_failed"
+
+
+def browser_was_closed(error: object) -> bool:
+    return "has been closed" in str(error).casefold()
 
 
 def _retrieve_and_validate(
@@ -700,7 +900,8 @@ def run(args) -> dict:
                 staging = save_staging(data, source_url, rec_number)
                 before = set(refstable._pdf_files(current))
                 store.transition(rec_number, "attaching", stage="endnote_attach")
-                attach_with_endnote(window, list_view, item["ui_index"], staging)
+                row_index = locate_row(list_view, item["ui_index"], item["row"], rows)
+                attach_with_endnote(window, list_view, row_index, item["title"], staging)
                 added = wait_for_attachment(rdb_dir, rec_number, before)
                 store.transition(
                     rec_number,
@@ -716,7 +917,9 @@ def run(args) -> dict:
                     rec_number,
                     status,
                     stage=store.job(rec_number).get("stage", "download"),
-                    error=str(exc),
+                    # pywinauto's timeouts and visibility errors carry no
+                    # message; without the type the failure is unreadable.
+                    error=str(exc) or repr(exc),
                 )
                 if status in {"rate_limited", "needs_user_auth"}:
                     access_failures += 1
@@ -724,6 +927,10 @@ def run(args) -> dict:
                     access_failures = 0
                 if status == "needs_user_auth":
                     pause_reason = "institutional login or user action required"
+                    break
+                if browser_was_closed(exc):
+                    # Every later record would fail the same way within a second.
+                    pause_reason = "the download browser window was closed"
                     break
                 if access_failures >= args.max_access_failures:
                     pause_reason = "publisher access circuit breaker opened"
@@ -821,7 +1028,7 @@ def main() -> int:
     try:
         result, code = run(args), 0
     except Exception as exc:
-        result, code = {"status": "error", "error": str(exc)}, 2
+        result, code = {"status": "error", "error": str(exc) or repr(exc)}, 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return code
 

@@ -55,6 +55,8 @@ lit-downloader = [
     "playwright>=1.62",
     "pymupdf>=1.24",
     'pywinauto>=0.6.9; sys_platform == "win32"',
+    # OS certificate verification for OA downloads (see retrieval._tls_context).
+    "truststore>=0.9",
 ]
 dev = [
     "build>=1.2",

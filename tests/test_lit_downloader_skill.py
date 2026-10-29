@@ -25,6 +25,132 @@ def test_normalize_doi_accepts_common_forms():
     expected = "10.1016/j.jmst.2025.01.054"
     assert MODULE.normalize_doi("DOI: 10.1016/J.JMST.2025.01.054") == expected
     assert MODULE.normalize_doi("https://doi.org/10.1016/j.jmst.2025.01.054") == expected
+    assert MODULE.normalize_doi("ARTN 101054\r10.1016/J.JMST.2025.01.054") == expected
+
+
+def test_row_texts_never_ask_for_a_column_the_list_does_not_have():
+    # EndNote X9 crashes when asked for a cell past its last column.
+    class Cell:
+        def __init__(self, value):
+            self.value = value
+
+        def text(self):
+            return self.value
+
+    class ListView:
+        def column_count(self):
+            return 3
+
+        def get_item(self, index, subitem=0):
+            assert subitem < 3, f"asked EndNote for column {subitem}"
+            return Cell(["Li, D.", "2022", "Elastocaloric cooling"][subitem])
+
+    assert MODULE._list_row_texts(ListView(), 0) == {"Li, D.", "2022", "Elastocaloric cooling"}
+
+
+@pytest.mark.parametrize(
+    "stored, shown",
+    [
+        # narrow no-break space in EndNote, plain space on Web of Science
+        ("with 2 and 4" + chr(0x202F) + "at% Fe content", "with 2 and 4 at% Fe content"),
+        # en dash in EndNote, hyphen on Web of Science
+        ("Ti" + chr(0x2013) + "Ni-Based Alloys", "Ti-Ni-based alloys"),
+        ("Ni$_2$Mn$_{1.4}$In$_{0.6}$ alloys", "Ni2Mn1.4In0.6 alloys"),
+        ("Development of shape memory alloys", "DEVELOPMENT OF SHAPE MEMORY ALLOYS"),
+    ],
+)
+def test_title_pattern_tolerates_how_wos_renders_a_title(stored, shown):
+    assert MODULE.title_pattern(stored).search(shown)
+
+
+def test_title_pattern_still_rejects_a_different_title():
+    pattern = MODULE.title_pattern("Elastocaloric cooling of NiTi wires")
+    assert not pattern.search("Elastocaloric heating of NiTi wires")
+
+
+@pytest.mark.parametrize(
+    "url, arrived",
+    [
+        ("about:blank", False),
+        ("", False),
+        ("https://webofscience.clarivate.cn/wos/woscc/full-record/WOS:000", False),
+        ("https://links.clarivate.com/api/linkout?x=1", False),
+        ("https://doi.org/10.1063/5.0006301", False),
+        ("https://pubs.aip.org/aip/apl/article/116/1/1/12345", True),
+        ("https://onlinelibrary.wiley.com/doi/10.1002/pssb.201700299", True),
+    ],
+)
+def test_the_publisher_is_reached_only_past_the_wos_link_out_hops(url, arrived):
+    assert MODULE.on_publisher_page(url) is arrived
+
+
+def test_aip_and_rsc_pdf_links_have_their_own_selectors():
+    assert "a.article-pdfLink" in MODULE.publisher_selectors("https://pubs.aip.org/aip/apl/x")
+    assert 'a[href*="/articlepdf/" i]' in MODULE.publisher_selectors(
+        "https://pubs.rsc.org/en/content/articlelanding/2023/sm/d2sm01291j"
+    )
+
+
+def test_a_closed_browser_is_recognised():
+    error = RuntimeError("BrowserContext.new_page: Target page, context or browser has been closed")
+    assert MODULE.browser_was_closed(error)
+    assert not MODULE.browser_was_closed(RuntimeError("HTTP Error 403: Forbidden"))
+
+
+class _FakeList:
+    """A reference list: one (author, year, title) tuple per row, three columns."""
+
+    def __init__(self, rows, selected=()):
+        self.rows, self.selected = rows, list(selected)
+
+    def item_count(self):
+        return len(self.rows)
+
+    def column_count(self):
+        return 3
+
+    def get_item(self, index, subitem=0):
+        value = self.rows[index][subitem]
+
+        class Cell:
+            def text(self):
+                return value
+
+        return Cell()
+
+    def send_message(self, message, start, flags):
+        later = [i for i in self.selected if i > start]
+        return later[0] if later else -1
+
+
+_RECORDS = [
+    {"id": 10, "title": "Elastocaloric cooling", "year": "2020"},
+    {"id": 11, "title": "Barocaloric heating", "year": "2021"},
+    {"id": 12, "title": "Magnetocaloric pumps", "year": "2022"},
+]
+
+
+def test_a_record_that_moved_after_an_attachment_is_found_at_its_new_row():
+    view = _FakeList(
+        [
+            ("Li", "2021", "Barocaloric heating"),
+            ("Wu", "2022", "Magnetocaloric pumps"),
+            ("Li", "2020", "Elastocaloric cooling"),
+        ]
+    )
+    # Selected at row 0; after the list re-sorted it sits at row 2.
+    assert MODULE.locate_row(view, 0, _RECORDS[0], _RECORDS) == 2
+
+
+def test_a_record_missing_from_the_list_is_never_guessed():
+    view = _FakeList([("Li", "2021", "Barocaloric heating")])
+    with pytest.raises(RuntimeError, match="no longer shown"):
+        MODULE.locate_row(view, 0, _RECORDS[0], _RECORDS)
+
+
+def test_selected_rows_reads_every_selected_index():
+    assert MODULE.selected_rows(_FakeList(_RECORDS, selected=[1, 2])) == [1, 2]
+    assert MODULE.selected_rows(_FakeList(_RECORDS)) == []
 
 
 def test_title_similarity_ignores_case_and_punctuation():

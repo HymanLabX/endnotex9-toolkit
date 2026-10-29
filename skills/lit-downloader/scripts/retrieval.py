@@ -6,14 +6,33 @@ import ipaddress
 import json
 import os
 import socket
+import ssl
 from collections.abc import Iterable
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener, urlopen
 
 MAX_PDF_BYTES = 100 * 1024 * 1024
 USER_AGENT = "endnotex9-mcp-lit-downloader/0.1"
+
+
+def _tls_context() -> ssl.SSLContext:
+    """Verify certificates the way the operating system does.
+
+    Python's own verification cannot fetch an intermediate certificate a
+    server forgot to send, which browsers do silently: an institutional
+    repository copy that opened fine in Edge failed here with
+    CERTIFICATE_VERIFY_FAILED. truststore hands verification to the OS.
+    """
+    try:
+        import truststore
+    except ImportError:
+        return ssl.create_default_context()
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+
+_TLS = _tls_context()
 
 
 @dataclass(frozen=True)
@@ -77,7 +96,7 @@ class _SafeRedirectHandler(HTTPRedirectHandler):
 
 def _json_get(url: str, timeout: int) -> dict:
     request = Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
-    with urlopen(request, timeout=timeout) as response:
+    with urlopen(request, timeout=timeout, context=_TLS) as response:
         payload = response.read(5 * 1024 * 1024 + 1)
     if len(payload) > 5 * 1024 * 1024:
         raise RuntimeError("Resolver response exceeded 5 MB")
@@ -143,20 +162,16 @@ def resolve_oa_candidates(doi: str, timeout: int = 20) -> tuple[list[PdfCandidat
     return _unique(candidates), errors
 
 
-def download_pdf(candidate: PdfCandidate, timeout: int = 60) -> tuple[bytes, str]:
-    """Fetch one public OA candidate with redirect checks, magic bytes, and a hard cap."""
-    validate_public_url(candidate.url)
-    opener = build_opener(_SafeRedirectHandler())
-    request = Request(
-        candidate.url,
-        headers={"Accept": "application/pdf", "User-Agent": USER_AGENT},
-    )
-    with opener.open(request, timeout=timeout) as response:
+def fetch_public(url: str, headers: dict[str, str], timeout: int = 60) -> tuple[bytes, str]:
+    """GET a public URL with redirect checks and a hard cap; the body may be any content."""
+    validate_public_url(url)
+    opener = build_opener(HTTPSHandler(context=_TLS), _SafeRedirectHandler())
+    with opener.open(Request(url, headers=headers), timeout=timeout) as response:
         final_url = response.geturl()
         validate_public_url(final_url)
         length = response.headers.get("Content-Length")
         if length and int(length) > MAX_PDF_BYTES:
-            raise RuntimeError("PDF exceeds the 100 MB transfer limit")
+            raise RuntimeError("Response exceeds the 100 MB transfer limit")
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -166,8 +181,15 @@ def download_pdf(candidate: PdfCandidate, timeout: int = 60) -> tuple[bytes, str
             chunks.append(chunk)
             total += len(chunk)
             if total > MAX_PDF_BYTES:
-                raise RuntimeError("PDF exceeds the 100 MB transfer limit")
-    data = b"".join(chunks)
+                raise RuntimeError("Response exceeds the 100 MB transfer limit")
+    return b"".join(chunks), final_url
+
+
+def download_pdf(candidate: PdfCandidate, timeout: int = 60) -> tuple[bytes, str]:
+    """Fetch one public OA candidate with redirect checks, magic bytes, and a hard cap."""
+    data, final_url = fetch_public(
+        candidate.url, {"Accept": "application/pdf", "User-Agent": USER_AGENT}, timeout
+    )
     if not data.startswith(b"%PDF-"):
         raise RuntimeError("OA candidate returned non-PDF content")
     return data, final_url
