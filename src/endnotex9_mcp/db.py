@@ -295,13 +295,6 @@ def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
 # --------------------------------------------------------------------------
 
 
-def get_content_hash(conn: sqlite3.Connection, rec_number: int) -> str | None:
-    row = conn.execute(
-        "SELECT content_hash FROM refs WHERE rec_number = ?", (rec_number,)
-    ).fetchone()
-    return row["content_hash"] if row else None
-
-
 def content_hashes(conn: sqlite3.Connection) -> dict[int, str]:
     """All known (rec_number -> content_hash) pairs in one query.
 
@@ -348,10 +341,6 @@ def delete_reference(conn: sqlite3.Connection, rec_number: int) -> None:
     conn.execute("DELETE FROM refs WHERE rec_number = ?", (rec_number,))
     conn.execute("DELETE FROM refs_fts WHERE rowid = ?", (rec_number,))
     delete_pdf_text(conn, rec_number)
-
-
-def existing_rec_numbers(conn: sqlite3.Connection) -> set[int]:
-    return {row["rec_number"] for row in conn.execute("SELECT rec_number FROM refs")}
 
 
 def row_to_ref(row: sqlite3.Row) -> dict:
@@ -556,22 +545,6 @@ def list_groups(conn: sqlite3.Connection, include_empty: bool = True) -> list[di
             group["stale_members"] = (row["listed"] or 0) - size
         groups.append(group)
     return groups
-
-
-def group_member_numbers(conn: sqlite3.Connection, name: str) -> list[int]:
-    """Record numbers in every group with this name (names aren't unique)."""
-    return [
-        row["rec_number"]
-        for row in conn.execute(
-            """
-            SELECT DISTINCT m.rec_number
-            FROM group_members m
-            JOIN groups g ON g.id = m.group_id
-            WHERE g.name = ? COLLATE NOCASE
-            """,
-            (name,),
-        )
-    ]
 
 
 def count_groups(conn: sqlite3.Connection) -> int:

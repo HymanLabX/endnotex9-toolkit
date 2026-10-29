@@ -234,12 +234,3 @@ def read_records(myd_path: str | Path) -> list[bytes]:
 def _body(data: bytes, block: Block) -> bytes:
     start = block.pos + block.header_len
     return data[start : start + block.data_len]
-
-
-def is_dynamic_myisam(myi_path: str | Path) -> bool:
-    """Check a `.MYI` index file's header before trusting its `.MYD`."""
-    try:
-        head = Path(myi_path).read_bytes()[:8]
-    except OSError:
-        return False
-    return head[:4] == MYI_MAGIC and bool(_u2(head, 4) & HA_OPTION_PACK_RECORD)

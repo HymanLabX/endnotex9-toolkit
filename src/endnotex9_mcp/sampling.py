@@ -11,18 +11,6 @@ from typing import Any
 from . import profile
 from .classification import canonical_json
 
-_DTO_FIELDS = (
-    "rec_number",
-    "title",
-    "abstract",
-    "keywords",
-    "container_title",
-    "year",
-    "ref_type",
-    "authors",
-    "groups",
-)
-
 
 def library_fingerprint(conn) -> str:
     """Hash the indexed corpus and group membership deterministically."""

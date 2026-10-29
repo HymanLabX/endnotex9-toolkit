@@ -182,10 +182,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             raise
 
 
-# Explicit alias used by callers that treat this as a migration step.
-migrate_schema = ensure_schema
-
-
 def _session(conn: sqlite3.Connection, session_id: str) -> sqlite3.Row:
     row = conn.execute(
         "SELECT * FROM classification_sessions WHERE session_id=?", (session_id,)
