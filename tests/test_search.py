@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from endnotex9_mcp import db, search, tokenizer
+from endnotex9_toolkit import db, search, tokenizer
 
 
 def test_cjk_search_matches_a_partial_word(conn):

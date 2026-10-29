@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import classification, db, sampling, writeback, writeplan
+from endnotex9_toolkit import classification, db, sampling, writeback, writeplan
 
 
 def _source_files(tmp_path):

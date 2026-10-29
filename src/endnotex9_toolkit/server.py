@@ -747,7 +747,7 @@ def main() -> None:
         # message in front of them on the first tool call, and serves the library as soon as
         # setup writes a configuration, since `_get_config` retries until a load succeeds.
         # Only the background re-index watcher waits for the next launch.
-        print(f"endnotex9-mcp: {exc}", file=sys.stderr)
+        print(f"endnotex9-toolkit: {exc}", file=sys.stderr)
     else:
         if config.watch:
             watch_and_reindex(config.endnote_xml, config.db_path, library_path=config.library_path)

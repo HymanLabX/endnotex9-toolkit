@@ -1,4 +1,4 @@
-"""Load and save endnotex9-mcp configuration.
+"""Load and save endnotex9-toolkit configuration.
 
 Config lives at a per-OS app-config directory, same convention as most
 local-first CLI tools (APPDATA on Windows, XDG_CONFIG_HOME elsewhere).
@@ -15,7 +15,10 @@ import yaml
 
 from . import parser
 
-APP_NAME = "endnotex9-mcp"
+APP_NAME = "endnotex9-toolkit"
+# The name before 0.2.0. Its directory already holds the configuration and the index of everyone
+# who ran setup then, so it stays in use until a directory under the new name exists.
+_LEGACY_APP_NAME = "endnotex9-mcp"
 
 
 @dataclass
@@ -39,7 +42,8 @@ def config_dir() -> Path:
         base = str(Path.home() / "Library" / "Application Support")
     else:
         base = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-    return Path(base) / APP_NAME
+    current, legacy = Path(base) / APP_NAME, Path(base) / _LEGACY_APP_NAME
+    return legacy if not current.exists() and legacy.is_dir() else current
 
 
 def config_path() -> Path:
@@ -56,16 +60,16 @@ def setup_command() -> str:
     """Name the setup invocation that works for the way this copy was installed.
 
     The plugin starts the server through `uv run --directory <plugin>`, so a plugin user has no
-    `endnotex9-mcp` on PATH and the bare command fails for them. A source tree carrying the
+    `endnotex9-toolkit` on PATH and the bare command fails for them. A source tree carrying the
     plugin manifest may be that plugin directory or a clone someone pip-installed, so both
     spellings are given rather than guessing which.
     """
-    bare = "`endnotex9-mcp setup`"
+    bare = "`endnotex9-toolkit setup`"
     if not (_SOURCE_ROOT / ".claude-plugin" / "plugin.json").is_file():
         return bare
     return (
         f"{bare} (installed as a plugin: "
-        f'`uv run --directory "{_SOURCE_ROOT}" --extra pdf endnotex9-mcp setup`)'
+        f'`uv run --directory "{_SOURCE_ROOT}" --extra pdf endnotex9-toolkit setup`)'
     )
 
 

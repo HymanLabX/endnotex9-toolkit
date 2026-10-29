@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from endnotex9_mcp import config, parser
+from endnotex9_toolkit import config, parser
 
 
 def test_library_path_is_read_from_the_export(xml_path):
@@ -132,17 +132,17 @@ def test_config_accepts_a_direct_library_without_xml(tmp_path: Path, monkeypatch
 
 def test_missing_config_points_at_the_wizard(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path / "empty")
-    with pytest.raises(FileNotFoundError, match="endnotex9-mcp setup"):
+    with pytest.raises(FileNotFoundError, match="endnotex9-toolkit setup"):
         config.load_config()
 
 
 def test_setup_command_outside_a_plugin_tree_is_the_bare_command(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "_SOURCE_ROOT", tmp_path)
-    assert config.setup_command() == "`endnotex9-mcp setup`"
+    assert config.setup_command() == "`endnotex9-toolkit setup`"
 
 
 def test_missing_config_inside_a_plugin_names_the_uv_command(tmp_path: Path, monkeypatch):
-    # A plugin user has no `endnotex9-mcp` on PATH, so the hint has to be runnable as given.
+    # A plugin user has no `endnotex9-toolkit` on PATH, so the hint has to be runnable as given.
     plugin = tmp_path / "plugin"
     (plugin / ".claude-plugin").mkdir(parents=True)
     (plugin / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
@@ -150,7 +150,22 @@ def test_missing_config_inside_a_plugin_names_the_uv_command(tmp_path: Path, mon
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path / "empty")
     with pytest.raises(FileNotFoundError) as excinfo:
         config.load_config()
-    assert f'uv run --directory "{plugin}" --extra pdf endnotex9-mcp setup' in str(excinfo.value)
+    command = f'uv run --directory "{plugin}" --extra pdf endnotex9-toolkit setup'
+    assert command in str(excinfo.value)
+
+
+def test_config_dir_keeps_using_the_directory_setup_wrote_before_the_rename(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert config.config_dir() == tmp_path / "endnotex9-toolkit"
+
+    (tmp_path / "endnotex9-mcp").mkdir()
+    assert config.config_dir() == tmp_path / "endnotex9-mcp"
+
+    (tmp_path / "endnotex9-toolkit").mkdir()
+    assert config.config_dir() == tmp_path / "endnotex9-toolkit"
 
 
 # --------------------------------------------------------------------------

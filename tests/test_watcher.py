@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from endnotex9_mcp import watcher
+from endnotex9_toolkit import watcher
 
 
 def test_xml_only_handler_keeps_the_legacy_contract(tmp_path: Path):

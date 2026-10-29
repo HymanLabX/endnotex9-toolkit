@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from endnotex9_mcp import classification, db, sampling
+from endnotex9_toolkit import classification, db, sampling
 
 
 def _conn(tmp_path):

@@ -8,7 +8,7 @@
         "${CLAUDE_PLUGIN_ROOT}",
         "--extra",
         "pdf",
-        "endnotex9-mcp",
+        "endnotex9-toolkit",
         "serve"
       ]
     }

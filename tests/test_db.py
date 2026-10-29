@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from endnotex9_mcp import db
+from endnotex9_toolkit import db
 
 
 def test_two_connections_to_one_database_share_a_lock(tmp_path: Path):

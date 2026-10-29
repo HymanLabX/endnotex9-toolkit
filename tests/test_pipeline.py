@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import db, indexer, parser
+from endnotex9_toolkit import db, indexer, parser
 
 
 def test_index_counts(conn):
@@ -88,7 +88,7 @@ def test_incremental_reindex_updates_a_changed_record(conn, xml_path):
     assert db.get_reference(conn, 2)["title"].endswith("nickel titanium alloys")
 
     # The FTS index must follow the edit, not accumulate both versions.
-    from endnotex9_mcp import search
+    from endnotex9_toolkit import search
 
     assert search.search_references(conn, ["nickel titanium"], limit=5)[0]["rec_number"] == 2
     assert not [

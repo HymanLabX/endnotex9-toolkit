@@ -20,7 +20,7 @@ Both modes run from the `lit-downloader` extra (Playwright, PyMuPDF, pywinauto) 
 `endnotex9` plugin. Use the shell's own syntax for the plugin root: `$env:CLAUDE_PLUGIN_ROOT` in
 PowerShell and `${CLAUDE_PLUGIN_ROOT}` in bash; PowerShell reads `${CLAUDE_PLUGIN_ROOT}` as a
 *shell* variable and silently substitutes an empty string. If `CLAUDE_PLUGIN_ROOT` is unset — you
-are working in an endnotex9-mcp checkout rather than the installed plugin — substitute the
+are working in an endnotex9-toolkit checkout rather than the installed plugin — substitute the
 checkout root; the scripts find the package by walking up from their own path.
 
 ## Selected records mode

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import commit, myisam, writeback
+from endnotex9_toolkit import commit, myisam, writeback
 
 
 def _row(rec_number: int, **fields) -> bytes:

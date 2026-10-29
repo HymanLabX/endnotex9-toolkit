@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import db, indexer, refstable, sources
+from endnotex9_toolkit import db, indexer, refstable, sources
 
 
 def _block(payload: bytes) -> bytes:

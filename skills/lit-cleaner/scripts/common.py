@@ -2,7 +2,7 @@
 
 Every script here is read-only until the caller explicitly asks for a
 commit; nothing imports EndNote or writes without going through
-`endnotex9_mcp.commit`, which itself refuses to write while EndNote holds
+`endnotex9_toolkit.commit`, which itself refuses to write while EndNote holds
 the library open (`writeback._ensure_unlocked`) and always backs up first.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 def package_root() -> Path | None:
-    """The endnotex9-mcp tree these scripts ship inside, or None if detached.
+    """The endnotex9-toolkit tree these scripts ship inside, or None if detached.
 
     Do not count parent directories here. The same scripts run from a source
     checkout and from an installed plugin, where Claude Code has copied the
@@ -24,7 +24,7 @@ def package_root() -> Path | None:
     of assuming a depth.
     """
     for parent in Path(__file__).resolve().parents:
-        if (parent / "src" / "endnotex9_mcp" / "__init__.py").is_file():
+        if (parent / "src" / "endnotex9_toolkit" / "__init__.py").is_file():
             return parent
     return None
 
@@ -32,22 +32,22 @@ def package_root() -> Path | None:
 PACKAGE_ROOT = package_root()
 if PACKAGE_ROOT is not None:
     sys.path.insert(0, str(PACKAGE_ROOT / "src"))
-elif find_spec("endnotex9_mcp") is None:
+elif find_spec("endnotex9_toolkit") is None:
     raise SystemExit(
-        "Cannot find endnotex9_mcp. Run this script from an endnotex9-mcp checkout "
+        "Cannot find endnotex9_toolkit. Run this script from an endnotex9-toolkit checkout "
         "or plugin directory, or install the package into the active environment."
     )
 
-from endnotex9_mcp import config as configmod  # noqa: E402
-from endnotex9_mcp import groups, parser, refstable  # noqa: E402
-from endnotex9_mcp.refstable import VALUE_SEPARATOR  # noqa: E402
+from endnotex9_toolkit import config as configmod  # noqa: E402
+from endnotex9_toolkit import groups, parser, refstable  # noqa: E402
+from endnotex9_toolkit.refstable import VALUE_SEPARATOR  # noqa: E402
 
 
 def load_library():
     """(rdb_dir, library_path, pdf_dir) from the same config the MCP server uses."""
     cfg = configmod.load_config()
     if not cfg.library_path:
-        raise SystemExit("No library_path configured; run `endnotex9-mcp setup` first.")
+        raise SystemExit("No library_path configured; run `endnotex9-toolkit setup` first.")
     rdb = groups.rdb_dir(cfg.library_path)
     if not (rdb / "refs.MYD").exists():
         raise SystemExit(f"No refs.MYD under {rdb} -- is library_path correct?")

@@ -1,12 +1,12 @@
 ---
 name: lit-cleaner
-description: Clean up an EndNote X9 library through endnotex9-mcp -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract/DOI), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /lit-cleaner, or asks to clean, dedupe, or fix up their EndNote library's metadata.
+description: Clean up an EndNote X9 library through endnotex9-toolkit -- fill in or correct metadata (volume/issue/pages/journal/author/keywords/notes/title/abstract/DOI), detect and merge duplicate references (tagging the loser for manual deletion in EndNote), and clean up orphaned PDF attachments plus this tool's own old backups. Use when the user invokes /lit-cleaner, or asks to clean, dedupe, or fix up their EndNote library's metadata.
 ---
 
 # lit-cleaner
 
-Three capabilities over the library configured for this project's `endnotex9-mcp` server
-(`~/.config/endnotex9-mcp/config.yaml` or the platform equivalent — the scripts below load it the
+Three capabilities over the library configured for this project's `endnotex9-toolkit` server
+(`~/.config/endnotex9-toolkit/config.yaml` or the platform equivalent — the scripts below load it the
 same way the MCP server does, so there is nothing to configure separately):
 
 1. **metadata** — fill in or correct volume/issue/pages/article number/number of volumes/journal/
@@ -26,7 +26,7 @@ same way the MCP server does, so there is nothing to configure separately):
 
 ## Running the scripts
 
-This skill ships inside the `endnotex9` plugin, whose root also holds the `endnotex9-mcp`
+This skill ships inside the `endnotex9` plugin, whose root also holds the `endnotex9-toolkit`
 package. Run every script through that environment so it sees the same dependencies as the MCP
 server itself:
 
@@ -42,7 +42,7 @@ command into `uv run --directory ""` and fails somewhere unhelpful.
 Below, `metadata.py`, `dedup.py` and `files.py` are shorthand for exactly that command shape with
 the script name swapped; `scripts/out/*.json` means
 `<plugin-root>/skills/lit-cleaner/scripts/out/*.json`, which the Read tool needs spelled out in
-full. If `CLAUDE_PLUGIN_ROOT` is unset — you are working in an endnotex9-mcp checkout rather
+full. If `CLAUDE_PLUGIN_ROOT` is unset — you are working in an endnotex9-toolkit checkout rather
 than through the installed plugin — substitute the checkout root; the scripts locate the package
 by walking up from their own path, so both layouts work.
 

@@ -32,7 +32,7 @@ from pathlib import Path
 
 
 def package_root() -> Path | None:
-    """The endnotex9-mcp tree this script ships inside, or None if detached.
+    """The endnotex9-toolkit tree this script ships inside, or None if detached.
 
     Do not count parent directories here. The same script runs from a source
     checkout and from an installed plugin, where the agent has copied the
@@ -40,7 +40,7 @@ def package_root() -> Path | None:
     instead of assuming a depth.
     """
     for parent in Path(__file__).resolve().parents:
-        if (parent / "src" / "endnotex9_mcp" / "__init__.py").is_file():
+        if (parent / "src" / "endnotex9_toolkit" / "__init__.py").is_file():
             return parent
     return None
 
@@ -165,17 +165,17 @@ def read_existing_notes(rec_number: int) -> str:
     lag a hand edit made in EndNote, and merging into a stale value is how
     you lose the paragraph the user typed this morning.
     """
-    if PACKAGE_ROOT is None and find_spec("endnotex9_mcp") is None:
+    if PACKAGE_ROOT is None and find_spec("endnotex9_toolkit") is None:
         raise SystemExit(
-            "Cannot find endnotex9_mcp. Run this script from an endnotex9-mcp checkout "
+            "Cannot find endnotex9_toolkit. Run this script from an endnotex9-toolkit checkout "
             "or plugin directory, or pass --existing-file to work without the library."
         )
-    from endnotex9_mcp import config as configmod
-    from endnotex9_mcp import groups, refstable
+    from endnotex9_toolkit import config as configmod
+    from endnotex9_toolkit import groups, refstable
 
     cfg = configmod.load_config()
     if not cfg.library_path:
-        raise SystemExit("No library_path configured; run `endnotex9-mcp setup` first.")
+        raise SystemExit("No library_path configured; run `endnotex9-toolkit setup` first.")
     rdb = groups.rdb_dir(cfg.library_path)
     if not (rdb / "refs.MYD").exists():
         raise SystemExit(f"No refs.MYD under {rdb} -- is library_path correct?")

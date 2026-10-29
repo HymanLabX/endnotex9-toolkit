@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from endnotex9_mcp import bibtex, citation, db
+from endnotex9_toolkit import bibtex, citation, db
 
 
 def test_apa7_journal_article(conn):

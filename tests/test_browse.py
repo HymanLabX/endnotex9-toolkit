@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from endnotex9_mcp import browse, db
+from endnotex9_toolkit import browse, db
 
 
 def test_list_returns_everything_by_default(conn):

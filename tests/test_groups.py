@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import browse, db, groups, indexer, myisam
+from endnotex9_toolkit import browse, db, groups, indexer, myisam
 
 # --------------------------------------------------------------------------
 # building a MyISAM file to read back
@@ -219,7 +219,7 @@ def test_empty_groups_can_be_hidden(grouped):
 
 
 def test_search_can_be_confined_to_a_group(grouped):
-    from endnotex9_mcp import search
+    from endnotex9_toolkit import search
 
     unfiltered = {r["rec_number"] for r in search.search_references(grouped, ["martensitic"])}
     assert unfiltered == {1, 2}

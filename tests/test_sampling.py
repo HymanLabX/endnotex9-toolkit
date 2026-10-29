@@ -1,4 +1,4 @@
-from endnotex9_mcp import db, sampling
+from endnotex9_toolkit import db, sampling
 
 
 def _conn(tmp_path):

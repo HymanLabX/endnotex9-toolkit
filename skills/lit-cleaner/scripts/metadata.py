@@ -43,10 +43,10 @@ import argparse
 import json
 from pathlib import Path
 
-import common  # side effect: puts the endnotex9_mcp package on sys.path
+import common  # side effect: puts the endnotex9_toolkit package on sys.path
 import crossref
 
-from endnotex9_mcp import commit
+from endnotex9_toolkit import commit
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 

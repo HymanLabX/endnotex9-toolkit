@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "endnotex9": {
-      "command": "endnotex9-mcp",
+      "command": "endnotex9-toolkit",
       "args": ["serve"]
     }
   }

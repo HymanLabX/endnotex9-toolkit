@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from endnotex9_mcp import (
+from endnotex9_toolkit import (
     classification,
     db,
     indexer,

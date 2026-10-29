@@ -1,6 +1,6 @@
 ---
 name: lit-deep-reader
-description: Close-read one paper already in an EndNote X9 library through endnotex9-mcp -- resolve the record, extract and read its PDF in passes, pull out the problem, method, data, results, limitations and the numbers that matter, verify specific claims against the full text, place it among neighbouring references, and optionally save a compact reading note back into the record's Notes field without losing what is already there. Use when the user invokes /lit-deep-reader, or asks to read, digest, summarize in depth, appraise, or 精读 a specific paper in their library.
+description: Close-read one paper already in an EndNote X9 library through endnotex9-toolkit -- resolve the record, extract and read its PDF in passes, pull out the problem, method, data, results, limitations and the numbers that matter, verify specific claims against the full text, place it among neighbouring references, and optionally save a compact reading note back into the record's Notes field without losing what is already there. Use when the user invokes /lit-deep-reader, or asks to read, digest, summarize in depth, appraise, or 精读 a specific paper in their library.
 ---
 
 # lit-deep-reader
@@ -152,7 +152,7 @@ Use the shell's own syntax for that variable: `$env:CLAUDE_PLUGIN_ROOT` in Power
 and `${CLAUDE_PLUGIN_ROOT}` in bash. PowerShell reads `${CLAUDE_PLUGIN_ROOT}` as a *shell*
 variable, not an environment one, and silently substitutes an empty string.
 
-If `CLAUDE_PLUGIN_ROOT` is unset — you are in an endnotex9-mcp checkout rather than the installed
+If `CLAUDE_PLUGIN_ROOT` is unset — you are in an endnotex9-toolkit checkout rather than the installed
 plugin — substitute the checkout root; the script finds the package by walking up from its own
 path, so both layouts work. Write the block body (the compact form from
 `references/note-templates.md`, not the long markdown) to a file first, or pass `--note-file -`

@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import myisam, server, writeback
-from endnotex9_mcp.config import Config
+from endnotex9_toolkit import myisam, server, writeback
+from endnotex9_toolkit.config import Config
 
 EXPECTED_TOOLS = {
     "search_references",
@@ -248,7 +248,7 @@ def test_server_starts_without_a_configuration(tmp_path, monkeypatch, capsys):
     # Staying up lets the first tool call say what is missing, and lets setup take effect
     # without restarting the server.
     def missing():
-        raise FileNotFoundError("No configuration found. Run `endnotex9-mcp setup` first.")
+        raise FileNotFoundError("No configuration found. Run `endnotex9-toolkit setup` first.")
 
     monkeypatch.setattr(server, "_config", None)
     monkeypatch.setattr(server, "load_config", missing)
@@ -260,8 +260,8 @@ def test_server_starts_without_a_configuration(tmp_path, monkeypatch, capsys):
 
     assert ran == [True]
     assert watched == []
-    assert "endnotex9-mcp setup" in capsys.readouterr().err
-    with pytest.raises(FileNotFoundError, match="endnotex9-mcp setup"):
+    assert "endnotex9-toolkit setup" in capsys.readouterr().err
+    with pytest.raises(FileNotFoundError, match="endnotex9-toolkit setup"):
         server._get_config()
 
     written_by_setup = Config(db_path=str(tmp_path / "library.db"))

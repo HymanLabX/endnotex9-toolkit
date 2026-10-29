@@ -26,7 +26,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def _package_root() -> Path:
-    """The endnotex9-mcp tree this skill ships inside.
+    """The endnotex9-toolkit tree this skill ships inside.
 
     Do not count parent directories here. The same script runs from a source
     checkout and from an installed plugin, where Claude Code has copied the
@@ -34,10 +34,10 @@ def _package_root() -> Path:
     of assuming a depth.
     """
     for parent in Path(__file__).resolve().parents:
-        if (parent / "src" / "endnotex9_mcp" / "__init__.py").is_file():
+        if (parent / "src" / "endnotex9_toolkit" / "__init__.py").is_file():
             return parent
     raise SystemExit(
-        "Cannot find endnotex9_mcp. Run this script from an endnotex9-mcp checkout "
+        "Cannot find endnotex9_toolkit. Run this script from an endnotex9-toolkit checkout "
         "or plugin directory."
     )
 
@@ -49,8 +49,8 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from job_store import JobStore  # noqa: E402
 from retrieval import download_pdf, resolve_oa_candidates  # noqa: E402
 
-from endnotex9_mcp import config as configmod  # noqa: E402
-from endnotex9_mcp import groups, parser, refstable  # noqa: E402
+from endnotex9_toolkit import config as configmod  # noqa: E402
+from endnotex9_toolkit import groups, parser, refstable  # noqa: E402
 
 MAX_CAPTURE_BYTES = 200 * 1024 * 1024
 
@@ -717,7 +717,7 @@ def wait_for_attachment(rdb_dir: Path, rec_number: int, before: set[str]) -> lis
 def refresh_indexes():
     for command in ("index", "index-pdfs"):
         subprocess.run(
-            [sys.executable, "-m", "endnotex9_mcp.cli", command],
+            [sys.executable, "-m", "endnotex9_toolkit.cli", command],
             cwd=REPO_ROOT,
             check=True,
             stdout=subprocess.DEVNULL,

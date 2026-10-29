@@ -15,7 +15,7 @@ It answers four questions about a draft and a corpus file:
 * what the citation order is, for a numbered bibliography -> --renumber
 
 It reads two files and writes at most one. It never touches the EndNote
-library, imports nothing from `endnotex9_mcp`, and makes no network calls;
+library, imports nothing from `endnotex9_toolkit`, and makes no network calls;
 the whole thing is a function of (draft text, corpus list).
 """
 

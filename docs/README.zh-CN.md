@@ -1,14 +1,17 @@
-# endnotex9-mcp 中文说明
+# endnotex9-toolkit 中文说明
 
-`endnotex9-mcp` 是一个本地优先的 EndNote X9 MCP 服务。Codex、Claude 和其他支持
+`endnotex9-toolkit` 是一个本地优先的 EndNote X9 MCP 服务。Codex、Claude 和其他支持
 MCP stdio 的客户端可以通过它检索文献、读取现有分组、设计可审计分类、生成引用并
 读取 PDF 附件。EndNote 文献库不需要上传到第三方服务。
 
 [English README](../README.md)
 
+> [!NOTE]
+> 0.2.0 起由 `endnotex9-mcp` 更名而来。旧命令仍然可用，之前 `setup` 写下的配置也会在原位置被找到。
+
 > [!IMPORTANT]
 > 直接读取功能以 EndNote X9 为测试目标。EndNote 的底层表格式没有公开文档；使用
-> 更高版本时，请先运行 `endnotex9-mcp crosscheck`。绝大多数 MCP 工具是只读的。
+> 更高版本时，请先运行 `endnotex9-toolkit crosscheck`。绝大多数 MCP 工具是只读的。
 > 只有 `update_reference_fields` 和 `mark_references` 两个工具能写入文献库，且仅限于
 > 已验证安全的一小类字段（卷号/期号/页码等书目字段、期刊、Notes、标题、摘要、DOI、
 > 作者列表、关键词列表，或未使用的 Custom 2–7 字段）。两者默认只预览不写入（`dry_run=True`），真正
@@ -91,14 +94,14 @@ server，首次运行会自建环境，不需要自己 `pip install`。
 Claude Code：
 
 ```text
-/plugin marketplace add HymanLabX/endnotex9-mcp
+/plugin marketplace add HymanLabX/endnotex9-toolkit
 /plugin install endnotex9@endnotex9
 ```
 
 Codex：
 
 ```bash
-codex plugin marketplace add HymanLabX/endnotex9-mcp
+codex plugin marketplace add HymanLabX/endnotex9-toolkit
 codex plugin add endnotex9@endnotex9
 ```
 
@@ -125,7 +128,7 @@ writable_roots = ["D:\\Research"]   # 存放 .enl 及其 .Data 目录的文件�
 随后执行一次初始化，让 server 知道要读哪个文献库：
 
 ```bash
-uv run --directory <插件目录> --extra pdf endnotex9-mcp setup
+uv run --directory <插件目录> --extra pdf endnotex9-toolkit setup
 ```
 
 加上 `--extra pdf` 是为了与插件启动 server 所用的环境一致，这样初始化会顺带把环境建好。首次启动
@@ -171,9 +174,9 @@ Playwright 不需要另外下载浏览器。
 ```bash
 python -m venv .venv
 python -m pip install -e ".[pdf]"
-endnotex9-mcp setup
-endnotex9-mcp index-pdfs
-endnotex9-mcp status
+endnotex9-toolkit setup
+endnotex9-toolkit index-pdfs
+endnotex9-toolkit status
 ```
 
 如果不需要读取 PDF，可以省略 `[pdf]`。`setup` 接受 `.enl` 路径和可选 XML 导出，
@@ -182,9 +185,9 @@ endnotex9-mcp status
 自动化安装可直接传入路径；出现任一路径参数后，`setup` 不再询问：
 
 ```bash
-endnotex9-mcp setup --library "D:\\Research\\My Library.enl"
-endnotex9-mcp setup --xml "D:\\Research\\library.xml" --pdf-dir "D:\\Research\\My Library.Data\\PDF"
-endnotex9-mcp doctor --json
+endnotex9-toolkit setup --library "D:\\Research\\My Library.enl"
+endnotex9-toolkit setup --xml "D:\\Research\\library.xml" --pdf-dir "D:\\Research\\My Library.Data\\PDF"
+endnotex9-toolkit doctor --json
 ```
 
 还可以使用 `--db-path` 指定索引、`--skip-index` 只写配置、`--no-watch` 关闭后台刷新。
@@ -196,11 +199,11 @@ endnotex9-mcp doctor --json
 装插件时 server 已自动注册，`codex mcp list` 即可看到。若想手工注册：
 
 ```bash
-codex mcp add endnotex9 -- endnotex9-mcp serve
+codex mcp add endnotex9 -- endnotex9-toolkit serve
 codex mcp get endnotex9 --json
 ```
 
-如果 Codex 找不到 `endnotex9-mcp`，请将命令替换为虚拟环境中可执行文件的绝对路径。
+如果 Codex 找不到 `endnotex9-toolkit`，请将命令替换为虚拟环境中可执行文件的绝对路径。
 配置示例见 [`examples/codex-config.toml`](../examples/codex-config.toml)。
 
 ## 连接 Claude Desktop 或 Claude Code
@@ -209,7 +212,7 @@ codex mcp get endnotex9 --json
 {
   "mcpServers": {
     "endnotex9": {
-      "command": "endnotex9-mcp",
+      "command": "endnotex9-toolkit",
       "args": ["serve"]
     }
   }

@@ -1,6 +1,6 @@
 """Read-only access to an EndNote X9 library for the collection pipeline.
 
-Only the refs table is read, through `endnotex9_mcp.refstable`; nothing here writes to the
+Only the refs table is read, through `endnotex9_toolkit.refstable`; nothing here writes to the
 library. Attachments go in through EndNote's own RIS import, never by editing its files.
 """
 
@@ -12,9 +12,11 @@ from pathlib import Path
 
 def _package_src() -> Path:
     for parent in Path(__file__).resolve().parents:
-        if (parent / "src" / "endnotex9_mcp" / "__init__.py").is_file():
+        if (parent / "src" / "endnotex9_toolkit" / "__init__.py").is_file():
             return parent / "src"
-    raise SystemExit("Cannot find endnotex9_mcp; run from an endnotex9-mcp checkout or plugin.")
+    raise SystemExit(
+        "Cannot find endnotex9_toolkit; run from an endnotex9-toolkit checkout or plugin."
+    )
 
 
 def data_dir(enl: str | Path) -> Path:
@@ -38,7 +40,7 @@ def data_dir(enl: str | Path) -> Path:
 def library_references(enl: str | Path) -> list[dict]:
     """One dict per live record: rec_number, doi (lower case), title, pdf_files."""
     sys.path.insert(0, str(_package_src()))
-    from endnotex9_mcp import refstable
+    from endnotex9_toolkit import refstable
 
     rdb = data_dir(enl) / "rdb"
     refs = []

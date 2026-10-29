@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from endnotex9_mcp import parser
+from endnotex9_toolkit import parser
 
 
 def test_cross_domain_fixture_covers_long_cjk_and_empty_keywords(cross_domain_xml):

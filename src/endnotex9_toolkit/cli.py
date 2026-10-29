@@ -54,7 +54,7 @@ def _validate_non_interactive_paths(library: str, xml_path: str, pdf_dir: str) -
 
 
 def cmd_setup(args: argparse.Namespace) -> None:
-    print("endnotex9-mcp setup\n")
+    print("endnotex9-toolkit setup\n")
     non_interactive = _setup_is_non_interactive(args)
     if non_interactive:
         library = _absolute(getattr(args, "library", None))
@@ -151,13 +151,13 @@ def cmd_setup(args: argparse.Namespace) -> None:
             print(f"  {attachments} PDF attachments found. {pdfmod.PDF_EXTRA_HINT}")
         elif attachments:
             print(f"  {attachments} PDF attachments found. To make their text searchable, run:")
-            print(f"      endnotex9-mcp index-pdfs      (~{attachments // 120 + 1} min)")
+            print(f"      endnotex9-toolkit index-pdfs      (~{attachments // 120 + 1} min)")
 
     print("\nNext: register the server with an MCP client.\n")
     print("  Codex:")
-    print("    codex mcp add endnotex9 -- endnotex9-mcp serve")
+    print("    codex mcp add endnotex9 -- endnotex9-toolkit serve")
     print("\n  Claude Desktop / Claude Code:")
-    print('    {"mcpServers": {"endnotex9": {"command": "endnotex9-mcp", "args": ["serve"]}}}')
+    print('    {"mcpServers": {"endnotex9": {"command": "endnotex9-toolkit", "args": ["serve"]}}}')
     print("\nUse the executable's absolute path if the client cannot find it on PATH.")
 
 
@@ -230,7 +230,7 @@ def doctor_report() -> dict:
     if not database.is_file():
         checks.append(
             _doctor_check(
-                "index", "fail", f"Index is missing; run `endnotex9-mcp index`: {database}"
+                "index", "fail", f"Index is missing; run `endnotex9-toolkit index`: {database}"
             )
         )
     else:
@@ -428,7 +428,7 @@ def cmd_serve(_args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="endnotex9-mcp")
+    parser = argparse.ArgumentParser(prog="endnotex9-toolkit")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_setup = sub.add_parser("setup", help="configure a library interactively or with flags")

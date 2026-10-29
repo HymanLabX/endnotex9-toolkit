@@ -1,6 +1,6 @@
 ---
 name: lit-classifier
-description: Build a reviewable topic classification over an EndNote X9 library with endnotex9-mcp -- profile the corpus, propose a facet taxonomy, write bounded declarative rules, evaluate them, audit a holdout sample, and produce the read-only Custom 1 writeback preview. Use when the user invokes /lit-classifier, or asks to classify, categorize, tag by topic, or build a taxonomy over their EndNote library.
+description: Build a reviewable topic classification over an EndNote X9 library with endnotex9-toolkit -- profile the corpus, propose a facet taxonomy, write bounded declarative rules, evaluate them, audit a holdout sample, and produce the read-only Custom 1 writeback preview. Use when the user invokes /lit-classifier, or asks to classify, categorize, tag by topic, or build a taxonomy over their EndNote library.
 ---
 
 # lit-classifier

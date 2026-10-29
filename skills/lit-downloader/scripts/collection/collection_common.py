@@ -34,7 +34,7 @@ OA_URL_CACHES = ("s2_urls.json", "openalex_urls.json")
 DEFAULT_EXCLUDE_PREFIXES = ["10.1063", "10.1116", "10.1134", "10.1080"]
 DEFAULT_BLOCKED_HOSTS = ["sagepub", "hal.science", "hdl.handle.net"]
 
-USER_AGENT = "endnotex9-mcp-lit-downloader/0.1 (collection pipeline)"
+USER_AGENT = "endnotex9-toolkit-lit-downloader/0.2 (collection pipeline)"
 
 
 def _default_downloads() -> str:

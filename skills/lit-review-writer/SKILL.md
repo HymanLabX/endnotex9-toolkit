@@ -1,6 +1,6 @@
 ---
 name: lit-review-writer
-description: Write a literature review over one slice of an EndNote X9 library through endnotex9-mcp -- an EndNote group, a research direction, a lab's output, or one researcher's papers. Resolve the scope to an explicit frozen record list, census it, read it at an agreed depth, build an evidence table, synthesise a themed review in which every claim carries the record number it came from, audit those citations against the corpus, and emit the bibliography in APA 7 or GB/T 7714. Use when the user invokes /lit-review-writer, or asks to write a review, survey, related-work section, research-landscape summary, 综述 or 文献综述 over a group, topic, lab or author in their library.
+description: Write a literature review over one slice of an EndNote X9 library through endnotex9-toolkit -- an EndNote group, a research direction, a lab's output, or one researcher's papers. Resolve the scope to an explicit frozen record list, census it, read it at an agreed depth, build an evidence table, synthesise a themed review in which every claim carries the record number it came from, audit those citations against the corpus, and emit the bibliography in APA 7 or GB/T 7714. Use when the user invokes /lit-review-writer, or asks to write a review, survey, related-work section, research-landscape summary, 综述 or 文献综述 over a group, topic, lab or author in their library.
 ---
 
 # lit-review-writer
@@ -191,7 +191,7 @@ uv run --directory "$env:CLAUDE_PLUGIN_ROOT" python "$env:CLAUDE_PLUGIN_ROOT/ski
 Use the shell's own syntax for that variable: `$env:CLAUDE_PLUGIN_ROOT` in PowerShell, as above,
 and `${CLAUDE_PLUGIN_ROOT}` in bash. PowerShell reads `${CLAUDE_PLUGIN_ROOT}` as a *shell*
 variable, not an environment one, and silently substitutes an empty string. If the variable is
-unset — you are in an endnotex9-mcp checkout rather than the installed plugin — substitute the
+unset — you are in an endnotex9-toolkit checkout rather than the installed plugin — substitute the
 checkout root. The script imports nothing from the package, so plain `python cite_audit.py` works
 too.
 

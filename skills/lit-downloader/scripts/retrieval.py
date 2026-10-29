@@ -14,7 +14,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener, urlopen
 
 MAX_PDF_BYTES = 100 * 1024 * 1024
-USER_AGENT = "endnotex9-mcp-lit-downloader/0.1"
+USER_AGENT = "endnotex9-toolkit-lit-downloader/0.2"
 
 
 def _tls_context() -> ssl.SSLContext:

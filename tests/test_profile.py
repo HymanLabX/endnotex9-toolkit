@@ -1,4 +1,4 @@
-from endnotex9_mcp import db, profile
+from endnotex9_toolkit import db, profile
 
 
 def _conn(tmp_path):

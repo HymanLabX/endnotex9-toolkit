@@ -1,4 +1,4 @@
-# endnotex9-mcp
+# endnotex9-toolkit
 
 A local-first [Model Context Protocol](https://modelcontextprotocol.io/) server for EndNote X9.
 It lets Codex, Claude, and other MCP clients search a library, inspect existing groups, build an
@@ -7,9 +7,13 @@ to a third-party service.
 
 [简体中文说明](docs/README.zh-CN.md)
 
+> [!NOTE]
+> Renamed from `endnotex9-mcp` in 0.2.0. The old command still starts the same CLI, and a
+> configuration written by an earlier `setup` is still found where it was saved.
+
 > [!IMPORTANT]
 > Direct library parsing is tested against EndNote X9. The format is undocumented; run
-> `endnotex9-mcp crosscheck` before trusting a later EndNote version. Almost every MCP tool is
+> `endnotex9-toolkit crosscheck` before trusting a later EndNote version. Almost every MCP tool is
 > read-only. Two tools — `update_reference_fields` and `mark_references` — can write to the
 > library, and only to a narrow, pre-verified set of columns: bibliographic fields (volume,
 > issue, pages, article number, number of volumes), journal, notes, title, abstract, DOI, the
@@ -113,14 +117,14 @@ first use, so there is nothing to `pip install` yourself.
 Claude Code:
 
 ```text
-/plugin marketplace add HymanLabX/endnotex9-mcp
+/plugin marketplace add HymanLabX/endnotex9-toolkit
 /plugin install endnotex9@endnotex9
 ```
 
 Codex:
 
 ```bash
-codex plugin marketplace add HymanLabX/endnotex9-mcp
+codex plugin marketplace add HymanLabX/endnotex9-toolkit
 codex plugin add endnotex9@endnotex9
 ```
 
@@ -149,7 +153,7 @@ back up the whole library first, and still refuse to run while EndNote holds the
 Then run the one-time setup so the server knows which library to read:
 
 ```bash
-uv run --directory <plugin-dir> --extra pdf endnotex9-mcp setup
+uv run --directory <plugin-dir> --extra pdf endnotex9-toolkit setup
 ```
 
 `--extra pdf` matches the environment the plugin starts the server in, so setup also finishes
@@ -213,18 +217,18 @@ absolute path. Omit `[pdf]` if PDF extraction is not needed.
 Run the interactive setup once:
 
 ```bash
-endnotex9-mcp setup
-endnotex9-mcp index-pdfs
-endnotex9-mcp status
+endnotex9-toolkit setup
+endnotex9-toolkit index-pdfs
+endnotex9-toolkit status
 ```
 
 For scripts or managed installations, pass paths directly; supplying path flags makes setup
 non-interactive:
 
 ```bash
-endnotex9-mcp setup --library "/path/to/Library.enl"
-endnotex9-mcp setup --xml "/path/to/export.xml" --pdf-dir "/path/to/Library.Data/PDF"
-endnotex9-mcp doctor --json
+endnotex9-toolkit setup --library "/path/to/Library.enl"
+endnotex9-toolkit setup --xml "/path/to/export.xml" --pdf-dir "/path/to/Library.Data/PDF"
+endnotex9-toolkit doctor --json
 ```
 
 Use `--skip-index` to write configuration only, `--db-path` for a custom index location, and
@@ -241,7 +245,7 @@ confirmed by a file-lock check — a merely recently used but now-closed library
 prefers it over the stored path whenever they differ. Point `setup` at a library once; afterward,
 whichever `.enl` you actually have open in EndNote takes over automatically, and the stored path
 is only used when nothing is currently open (EndNote isn't running, or you're on a non-Windows
-platform, or the library is only ever an XML export). `endnotex9-mcp status` marks the line
+platform, or the library is only ever an XML export). `endnotex9-toolkit status` marks the line
 `(auto-detected: currently open in EndNote)` when this override is active.
 
 ## Connect an MCP client
@@ -252,11 +256,11 @@ Installing the plugin already registers the server; `codex mcp list` will show i
 by hand instead:
 
 ```bash
-codex mcp add endnotex9 -- endnotex9-mcp serve
+codex mcp add endnotex9 -- endnotex9-toolkit serve
 codex mcp get endnotex9 --json
 ```
 
-If `endnotex9-mcp` is not on the PATH used by Codex, replace it with the absolute path to the
+If `endnotex9-toolkit` is not on the PATH used by Codex, replace it with the absolute path to the
 virtual environment executable. A TOML example is available at
 [`examples/codex-config.toml`](examples/codex-config.toml).
 
@@ -268,7 +272,7 @@ Add the following server entry to the relevant MCP configuration:
 {
   "mcpServers": {
     "endnotex9": {
-      "command": "endnotex9-mcp",
+      "command": "endnotex9-toolkit",
       "args": ["serve"]
     }
   }
@@ -283,7 +287,7 @@ the client does not inherit the virtual environment's PATH.
 Use the stdio transport and launch:
 
 ```text
-endnotex9-mcp serve
+endnotex9-toolkit serve
 ```
 
 ## Example requests

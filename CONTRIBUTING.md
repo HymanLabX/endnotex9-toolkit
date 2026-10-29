@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve `endnotex9-mcp`.
+Thank you for helping improve `endnotex9-toolkit`.
 
 ## Development setup
 
@@ -26,7 +26,7 @@ handed the unexpanded path. Register a local-scope server under the same name in
 scope takes precedence over the project's `.mcp.json` and stays out of the repository.
 
 ```bash
-claude mcp add --scope local endnotex9 -- uv run --directory "<checkout>" --extra pdf endnotex9-mcp serve
+claude mcp add --scope local endnotex9 -- uv run --directory "<checkout>" --extra pdf endnotex9-toolkit serve
 ```
 
 Do not reach for `${CLAUDE_PLUGIN_ROOT:-.}` to make one file serve both cases. Claude Code's

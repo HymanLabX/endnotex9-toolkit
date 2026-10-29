@@ -1,6 +1,6 @@
 # Architecture
 
-`endnotex9-mcp` separates immutable EndNote source data from rebuildable local indexes and
+`endnotex9-toolkit` separates immutable EndNote source data from rebuildable local indexes and
 reviewed classification state.
 
 ```text

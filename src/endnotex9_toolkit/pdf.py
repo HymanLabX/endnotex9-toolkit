@@ -9,7 +9,7 @@ resolution falls back to percent-decoding, and finally to "whatever PDF is
 in that folder" — the folder holds exactly one attachment.
 
 Text extraction needs PyMuPDF, which is an optional extra (`pip install
-endnotex9-mcp[pdf]`) rather than a hard dependency: PyMuPDF is AGPL-3.0 and
+endnotex9-toolkit[pdf]`) rather than a hard dependency: PyMuPDF is AGPL-3.0 and
 this package is MIT, so it is imported lazily and only when the user has
 chosen to install it. Everything else in the server works without it.
 """
@@ -36,7 +36,7 @@ _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 PDF_EXTRA_HINT = (
     "PDF text extraction needs PyMuPDF, which ships as an optional extra: "
-    'run `pip install "endnotex9-mcp[pdf]"` and try again.'
+    'run `pip install "endnotex9-toolkit[pdf]"` and try again.'
 )
 
 

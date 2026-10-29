@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import myisam, writeback
+from endnotex9_toolkit import myisam, writeback
 
 
 def _row(rec_number: int, **fields) -> bytes:
@@ -114,7 +114,7 @@ def test_row_round_trips():
 
 
 def test_decode_rejects_a_row_it_cannot_consume_exactly():
-    from endnotex9_mcp import refstable
+    from endnotex9_toolkit import refstable
 
     with pytest.raises(refstable.RowError, match="consumed"):
         writeback.decode_row(_row(1, title="x") + b"\x00\x00")

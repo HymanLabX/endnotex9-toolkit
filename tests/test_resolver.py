@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from endnotex9_mcp import db, resolver
+from endnotex9_toolkit import db, resolver
 
 
 def test_resolves_by_record_number_title_and_doi(conn):

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import cli, db
-from endnotex9_mcp.config import Config
+from endnotex9_toolkit import cli, db
+from endnotex9_toolkit.config import Config
 
 
 def test_setup_accepts_library_without_xml(tmp_path: Path, monkeypatch):

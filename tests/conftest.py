@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import db, indexer
+from endnotex9_toolkit import db, indexer
 
 
 def _styled(value: str) -> str:

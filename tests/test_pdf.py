@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_mcp import pdf as pdfmod
-from endnotex9_mcp import search
+from endnotex9_toolkit import pdf as pdfmod
+from endnotex9_toolkit import search
 
 fitz = pytest.importorskip("fitz", reason="PDF text extraction needs the [pdf] extra")
 
@@ -171,7 +171,7 @@ def test_read_pages_explains_an_empty_result(conn):
 
 
 def test_deleting_a_reference_drops_its_pdf_text(conn, pdf_dir):
-    from endnotex9_mcp import db
+    from endnotex9_toolkit import db
 
     pdfmod.index_pdfs(conn, pdf_dir)
     db.delete_reference(conn, 1)
