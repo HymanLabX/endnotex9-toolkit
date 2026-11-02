@@ -6,6 +6,8 @@ MCP stdio 的客户端可以通过它检索文献、读取现有分组、设计�
 
 [English README](../README.md)
 
+0.3.0 的文献库固定选择、预览提交和恢复机制变动见[升级说明](../CHANGELOG.md#030--2026-11-02)。
+
 > [!NOTE]
 > 0.2.0 起由 `endnotex9-mcp` 更名而来。旧命令仍然可用，之前 `setup` 写下的配置也会在原位置被找到。
 
@@ -15,7 +17,7 @@ MCP stdio 的客户端可以通过它检索文献、读取现有分组、设计�
 > 只有 `update_reference_fields` 和 `mark_references` 两个工具能写入文献库，且仅限于
 > 已验证安全的一小类字段（卷号/期号/页码等书目字段、期刊、Notes、标题、摘要、DOI、
 > 作者列表、关键词列表，或未使用的 Custom 2–7 字段）。两者默认只预览不写入（`dry_run=True`），真正
-> 写入前会先备份整个文献库。详见下方“安全边界”。
+> 写入前会先备份文献库元数据。详见下方“安全边界”。
 
 ## 主要功能
 
@@ -31,59 +33,20 @@ MCP stdio 的客户端可以通过它检索文献、读取现有分组、设计�
 
 ## 安全边界
 
-正常读取流程不会写入 `.enl`、`.MYD`、`.MYI` 或 PDF。分类状态、检索索引和 PDF
-文本保存在独立的本地 SQLite 数据库中。`prepare_classification_writeback` 仍然只生成
-带文件指纹的只读预览，`custom_1`（主题分类字段）没有提交通道。
+普通读取不会修改 EndNote 源文件；索引、分类状态和 PDF 文本保存在独立的本地数据库。
+Custom 1 分类写回目前只提供预览。只有 `update_reference_fields` 和 `mark_references`
+两个 MCP 工具支持受限字段提交，默认 `dry_run=True`；`year` 和记录删除始终未开放。
 
-有两个工具真正会写入文献库：`update_reference_fields`（卷号、期号、页码、文章编号、
-卷数、期刊、Notes、标题、摘要、DOI、作者列表、关键词列表）和 `mark_references`（往 Custom
-2–7 写入标记文本，用来配合 EndNote 智能分组做批量筛选——本项目本身从不删除任何条目）。
-`year`（年份）完全不可写——它是文献库仅有的两个 MyISAM 索引键之一，改索引值意味着要在
-B-tree 里删旧键插新键，不是简单地原地改字节。2026年8月做过一次只读的探路实验，直接在
-真实 `refs.MYI` 上定位到了两棵键树的根页（page 1 对应 `id`，page 13 对应 `yearIndex`，
-在里面找到了字面的 "2017" 文本确认无误），19个索引页两棵树全部对上，没有多余页面——但
-页内部的具体格式和插入/删除/再平衡算法没有解出来，这块没做通，年份和真正的删除功能一样，
-算独立的后续项目，不在这次的能力范围内。两者共享同一套保护机制：
+实际写回前备份 `.enl` 与完整 `rdb`，备份不包含 PDF 附件。工具使用字段白名单、全记录
+验证、MyISAM 空闲空间检查、跨进程互斥和写前恢复镜像。普通提交异常会回滚，进程中断则
+保留恢复目录并阻止继续写入，恢复命令见下方“文献库隔离与写回恢复”。
 
-- 可写字段列表是机械验证过的，不只是策略约定：`writeback.WRITABLE_COLUMNS` 只收录
-  已确认不在任何 `.MYI` 索引键或排序缓存（`csort`/`misc.DbSortedRecList`）范围内的
-  字段。`author`（作者）、`secondary_title`（期刊）、`keywords`（关键词）是清单里
-  唯一"看起来有风险"的几个——它们正好对应 EndNote 自己的三个词表——所以在把它们加进
-  可写清单前，专门逐字节读取了一份真实 1386 条文献库的 `terms.MYD`：全部 4818 行都
-  符合同一种固定格式（行 id、list_id、长度前缀字符串），**没有任何字段把某个词条和
-  实际引用它的 `refs` 记录关联起来**。这说明 `terms`/`jterms` 只是给"术语列表管理器"
-  UI 用的去重缓存，并不是 `refs` 记录要对齐校验的结构——直接改 `refs` 里的文本，
-  后果只是这份缓存暂时过期（旧词条还留着、新词条还没进去），需要用户在 EndNote 里跑
-  一次 Tools/References → Define Term Lists → Update List 才会刷新，这是 UI 层面的
-  滞后，不是数据损坏风险，而且本项目的写入代码从头到尾都不会打开
-  `terms.MYD`/`jterms.MYD`，只碰 `refs.MYD`/`refs.MYI`/`.enl`。排序缓存那边同样是
-  实测而非假设：这份真实库里的 `misc.DbSortedRecList` 已经因为之前在 EndNote 里手动
-  删除了约160条记录而过期，但库本身用起来完全正常。完整依据见 `writeback.py` 模块
-  文档。
-- 两个工具默认 `dry_run=True`：第一次调用永远只返回差异预览，不写入任何内容；必须
-  显式再传一次 `dry_run=False` 才会真正提交。
-- 提交时只写入实际发生变化的字段，且总是先把整个文献库（`.enl` 加完整 `rdb` 目录）
-  备份到一个新的带时间戳的目录，备份路径会在返回结果的 `backup_path` 中给出。
-- 每次写入后都会逐块重新读取文件校验：目标字段必须精确等于预期值，其余记录必须与
-  写入前逐字节一致，任何不一致都会在覆盖真实文件之前直接报错。
-- `.enl` 镜像在 `refs.MYD`/`refs.MYI` **之前**重建并校验，所以注定失败的重打包不会
-  留下"rdb 已更新、镜像还是旧的"这种分叉状态，而是什么都没动。重打包会把压缩包里的
-  每一个成员都原样搬过去，只替换 `refs.MYD`：目前检查过的库里只有 `refs.MYD` 和
-  `refs.frm` 两项，但万一存在没预料到的成员，静默丢弃是不可恢复的。
-- **真正提交前必须先关闭 EndNote。** 两个工具都是直接改 `refs.MYD`/`refs.MYI`/`.enl`
-  这几个文件，完全绕开 EndNote 自己的进程。如果 EndNote 还开着库，轻则写入因为文件
-  被占用而失败，重则 EndNote 内存里那份过期的旧数据后续被写回磁盘时，会把这次修改
-  悄悄覆盖掉。代码里有一个尽力而为的锁检测（`writeback._ensure_unlocked`，提交前
-  会先试着以读写模式打开这几个文件，打不开就直接拒绝），但这不是绝对保证——如果
-  EndNote 打开文件时用的是允许其他进程共享读写的模式，这个检测是发现不了的。所以
-  无论检测结果如何，提交前都要先手动关闭 EndNote。
+**所有提交前都须关闭 EndNote。** 工具之间的锁不能约束 EndNote 本身。首次在实际库使用
+变更前，仍应在一次性副本中确认库可以正常打开、排序和检索。作者、期刊和关键词写回后，
+EndNote 自己的术语自动补全列表可能需要手动运行 Update List。
 
-`writeback.py` 里更底层、可写任意列的 API（`set_column`/`set_fields`）本身并不对
-MCP 客户端暴露，只有 `commit.py` 里这两个字段范围受限的封装才是工具。继续扩展写回
-能力前请先阅读 [SECURITY.md](../SECURITY.md)，并始终先在真实文献库的一次性副本上
-验证，确认其仍能在 EndNote 中正常打开、排序和检索后，再考虑用于真实文献库。写入
-`author`/`journal`/`keywords`后如果在意自动补全是否同步，记得在 EndNote 里手动跑一次
-Update List——本工具不会替你更新词表。
+格式考证和历史故障依据见 [SECURITY.md](../SECURITY.md) 与
+[写回格式说明](writeback-format-notes.md)。
 
 ## 作为插件安装（Claude Code 或 Codex）
 
@@ -193,6 +156,37 @@ endnotex9-toolkit doctor --json
 还可以使用 `--db-path` 指定索引、`--skip-index` 只写配置、`--no-watch` 关闭后台刷新。
 非交互模式会拒绝不存在的输入路径。`doctor` 是只读诊断，不创建或修改索引；失败时
 返回非零退出码，`--json` 输出适合脚本处理。
+
+## 文献库隔离与写回恢复
+
+文献库现在由 `setup` 明确选定并固定；在 EndNote 中打开其他库不会自动改写库、XML、PDF
+或索引路径。切换时运行 `setup --library "其他库.enl"`，或在 Windows 下显式运行
+`setup --use-open-library`，然后重启 MCP 服务。新配置按库分配独立索引，已有配置的索引路径
+保留；发现索引属于其他数据源时拒绝覆盖，以保留已审核的分类会话。
+旧索引若缺少数据源标识，可运行 `endnotex9-toolkit index --adopt-source`；只有每条记录的
+源内容指纹完全一致才会绑定。若源已变化，请指定新的 `--db-path`，旧索引和审核状态会保留。
+
+写回采用跨进程互斥、写前镜像和失败回滚。预览返回 `source_fingerprint`，提交时应通过
+`expected_fingerprint` 传回；库在审核后发生变化会拒绝提交。清理脚本直接应用保存的预览，
+不在提交时重新查询 CrossRef 或扩大清理候选范围。所有提交前仍须关闭 EndNote。
+
+进程中断后会保留 `<Library>.enl.writeback-recovery`，阻止继续写回或建立源索引。关闭
+EndNote 后运行：
+
+```bash
+endnotex9-toolkit recover-writeback --library "D:\Research\My Library.enl"
+endnotex9-toolkit index
+```
+
+恢复会验证快照和现有文件，拒绝覆盖事务之外的修改。若失败，请保留恢复目录和备份。
+此机制处理进程中断，不保证抵御所有断电和磁盘故障。
+
+备份清理只处理可确认属于该库的完整备份，按创建时间保留；无关目录、未完成备份和无法
+确认归属的旧备份会保留。孤儿 PDF 使用与全文索引相同的路径解析规则，并保留相对路径隔离。
+
+清理报告与缓存位于用户应用数据目录的 `libraries/<库标识>/lit-cleaner`，脚本会打印
+`report_dir` 绝对路径，支持 `--output-dir`。插件安装目录不再保存这些运行产物。
+插件与 CI 使用已提交的 `uv.lock`，启动时使用 `uv run --locked`。
 
 ## 连接 Codex
 

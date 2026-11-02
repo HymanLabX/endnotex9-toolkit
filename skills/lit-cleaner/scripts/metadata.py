@@ -20,7 +20,7 @@ Two-source waterfall per field, same as the proven session run:
                         recovered from it.
 
 Always dry-run first: the plan lands in out/metadata_updates.json and the
-diff in out/metadata_dry_run.json, with nothing written to EndNote. Only
+diff in the printed report_dir/metadata_dry_run.json, with nothing written to EndNote. Only
 with --commit does it call commit.update_reference_fields with
 dry_run=False, which backs up the library and refuses to run while EndNote
 has it open.
@@ -41,14 +41,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
 import common  # side effect: puts the endnotex9_toolkit package on sys.path
 import crossref
 
-from endnotex9_toolkit import commit
-
-OUT_DIR = Path(__file__).resolve().parent / "out"
+from endnotex9_toolkit import commit, libraryio
 
 
 def build_updates(rows, crossref_data):
@@ -220,13 +217,42 @@ def build_updates(rows, crossref_data):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", action="store_true")
+    ap.add_argument("--output-dir", help="override the per-library report directory")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument(
-        "--refresh", action="store_true", help="ignore out/crossref_cache.json and re-query"
+        "--refresh", action="store_true", help="ignore the per-library CrossRef cache and re-query"
     )
     args = ap.parse_args()
 
     rdb, library_path, _pdf_dir = common.load_library()
+    out_dir = common.report_dir(library_path, args.output_dir)
+    if args.commit:
+        if args.refresh or args.limit:
+            raise SystemExit(
+                "--commit applies the saved preview; generate a new report to change its scope"
+            )
+        plan = out_dir / "metadata_dry_run.json"
+        if not plan.is_file():
+            raise SystemExit("Generate and review a metadata report before --commit")
+        preview = json.loads(plan.read_text(encoding="utf-8"))
+        if not preview["diffs"]:
+            print("nothing to commit")
+            return
+        updates = {}
+        for diff in preview["diffs"]:
+            updates.setdefault(int(diff["rec_number"]), {})[diff["field"]] = diff["new_value"]
+        result = commit.update_reference_fields(
+            rdb,
+            library_path,
+            updates,
+            dry_run=False,
+            expected_fingerprint=preview["source_fingerprint"],
+        )
+        (out_dir / "metadata_commit_result.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return
     rows = common.read_all_rows(rdb)
     if args.limit:
         rows = dict(list(rows.items())[: args.limit])
@@ -263,12 +289,12 @@ def main():
         if done % 50 == 0 or done == total:
             print(f"  crossref: {done}/{total}")
 
-    OUT_DIR.mkdir(exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     crossref_data = (
         crossref.fetch_many(
             needs_crossref,
             on_progress=progress,
-            cache_path=OUT_DIR / "crossref_cache.json",
+            cache_path=out_dir / "crossref_cache.json",
             refresh=args.refresh,
         )
         if needs_crossref
@@ -285,39 +311,37 @@ def main():
         print(f"  {k}: {v}")
     print(f"\ntotal records with at least one fix: {len(updates)}")
 
-    OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "metadata_updates.json").write_text(
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "metadata_updates.json").write_text(
         json.dumps({str(k): v for k, v in updates.items()}, ensure_ascii=False), encoding="utf-8"
     )
-    (OUT_DIR / "metadata_review.json").write_text(
+    (out_dir / "metadata_review.json").write_text(
         json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     if not updates:
+        (out_dir / "metadata_dry_run.json").write_text(
+            json.dumps(
+                {"diffs": [], "source_fingerprint": libraryio.source_fingerprint(rdb, library_path)}
+            ),
+            encoding="utf-8",
+        )
         print("\nnothing to do.")
         return
 
     preview = commit.update_reference_fields(rdb, library_path, updates, dry_run=True)
     print(f"\ndry_run: would_write={preview['would_write']} unchanged={preview['unchanged']}")
-    (OUT_DIR / "metadata_dry_run.json").write_text(
+    (out_dir / "metadata_dry_run.json").write_text(
         json.dumps(preview, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     review_count = len(review["author_count_mismatch"]) + len(review["author_surname_mismatch"])
     if review_count:
-        print(f"\n{review_count} record(s) need manual review -- see out/metadata_review.json")
+        print(
+            f"\n{review_count} record(s) need manual review -- see metadata_review.json in report_dir"
+        )
 
-    if not args.commit:
-        print("\n(dry run only -- rerun with --commit to actually write)")
-        return
-
-    result = commit.update_reference_fields(rdb, library_path, updates, dry_run=False)
-    print(
-        f"\ncommitted: records_written={result['records_written']} backup_path={result['backup_path']}"
-    )
-    (OUT_DIR / "metadata_commit_result.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    print("\n(dry run only -- rerun with --commit to apply this saved preview)")
 
 
 if __name__ == "__main__":

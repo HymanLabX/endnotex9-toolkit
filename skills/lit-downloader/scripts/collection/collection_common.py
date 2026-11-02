@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from endnotex9_toolkit.normalize import doi_key, title_key
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 HELPER_DIR = SCRIPT_DIR.parent  # download_selected.py: PDF validation shared with selected mode
 
@@ -162,13 +164,11 @@ def rec_journal(rec: list[list[str]]) -> str:
 
 
 def normalize_doi(value: str) -> str:
-    value = (value or "").strip().lower()
-    value = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi\s*:\s*)", "", value)
-    return value.rstrip(". ")
+    return doi_key(value)
 
 
 def norm_title(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+    return title_key(value or "")
 
 
 def list_records(project: Project) -> list[list[list[str]]]:
@@ -272,7 +272,6 @@ def folder_number(doi: str, attempt: int = 0) -> str:
 
 def load_validator():
     """`validate_pdf` and `title_similarity_in_text` from the selected-records helper."""
-    sys.path.insert(0, str(HELPER_DIR))
-    from download_selected import title_similarity_in_text, validate_pdf
+    from endnotex9_toolkit.pdf_identity import title_similarity_in_text, validate_pdf
 
     return validate_pdf, title_similarity_in_text

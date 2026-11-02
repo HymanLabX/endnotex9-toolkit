@@ -14,6 +14,23 @@ from pathlib import Path
 from endnotex9_toolkit import db
 
 
+def test_exact_title_and_doi_queries_use_indexes(tmp_path):
+    conn = db.connect(tmp_path / "index.db")
+    try:
+        for sql, value, expected in [
+            (
+                "SELECT * FROM refs WHERE endnote_title_key(title) = ?",
+                "a title",
+                "idx_refs_normalized_title",
+            ),
+            ("SELECT * FROM refs WHERE doi = ? COLLATE NOCASE", "10.1/a", "idx_refs_doi"),
+        ]:
+            plan = conn.execute("EXPLAIN QUERY PLAN " + sql, (value,)).fetchall()
+            assert expected in " ".join(str(tuple(row)) for row in plan)
+    finally:
+        conn.close()
+
+
 def test_two_connections_to_one_database_share_a_lock(tmp_path: Path):
     path = tmp_path / "index.db"
     first = db.connect(path)

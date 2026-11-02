@@ -5,12 +5,11 @@ Thank you for helping improve `endnotex9-toolkit`.
 ## Development setup
 
 ```bash
-python -m venv .venv
-python -m pip install -e ".[pdf,dev]"
-ruff check src tests skills
-ruff format --check src tests skills
-pytest
-python -m build
+uv sync --locked --extra pdf --extra dev
+uv run --locked --no-sync python -m ruff check src tests skills
+uv run --locked --no-sync python -m ruff format --check src tests skills
+uv run --locked --no-sync python -m pytest
+uv run --locked --no-sync python -m build
 ```
 
 Tests create synthetic EndNote-like fixtures in temporary directories. Never commit a real
@@ -66,3 +65,8 @@ AGPL-licensed reference projects must not be incorporated here.
 Include the Python version, operating system, EndNote version, command used, and a redacted
 traceback. Do not attach your real library or PDFs. A minimal synthetic fixture is strongly
 preferred.
+
+## Updating dependencies
+
+Run `uv lock --upgrade` deliberately, review the lockfile diff, then run the checks above.
+Commit `uv.lock` with the change; plugin startup uses `--locked` and refuses stale metadata.

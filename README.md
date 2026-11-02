@@ -7,6 +7,9 @@ to a third-party service.
 
 [简体中文说明](docs/README.zh-CN.md)
 
+For the library-selection and saved-preview changes in 0.3.0, see the
+[upgrade notes](CHANGELOG.md#030--2026-11-02).
+
 > [!NOTE]
 > Renamed from `endnotex9-mcp` in 0.2.0. The old command still starts the same CLI, and a
 > configuration written by an earlier `setup` is still found where it was saved.
@@ -41,62 +44,35 @@ to a third-party service.
 
 ## Safety model
 
-The normal read path never writes to `.enl`, `.MYD`, `.MYI`, or attachment files. Classification
-state and extracted PDF text live in a separate local SQLite index. `prepare_classification_writeback`
-only produces a fingerprinted preview; there is still no commit path for the `Custom 1` topic field.
+Ordinary retrieval never modifies EndNote source files. Classification is stored separately
+in the local index, and Custom 1 writeback remains a preview with no commit tool.
 
-Two tools do write to the library: `update_reference_fields` (volume, issue, pages, article
-number, number of volumes, journal, notes, title, abstract, DOI, author list, keyword list; `year`
-cannot be changed — see below) and `mark_references` (a
-marker string into Custom 2–7, meant to drive an EndNote Smart Group rather than delete anything
-directly — this server never deletes a record). Both share the same guardrails:
+`update_reference_fields` and `mark_references` are the only MCP write tools. Both default to
+`dry_run=True`, use independent field allowlists, and back up `.enl` plus the complete `rdb`
+directory before a real change. Attachment files are not part of this metadata backup.
+Pass the preview's `source_fingerprint` as `expected_fingerprint` on commit to reject changes
+made since review. The cleaner scripts apply their saved, fingerprinted previews directly.
 
-- The column allowlist is mechanical, not just policy: `writeback.WRITABLE_COLUMNS` only accepts
-  columns verified to sit outside every EndNote `.MYI` key and sort cache
-  (`csort`/`misc.DbSortedRecList`). `author`, `secondary_title` (journal) and `keywords` are the
-  one case that looked risky on paper — they back three of EndNote's own term lists — so
-  `terms.MYD` was read byte for byte against a real library rather than assumed safe: all 4818
-  rows fit one fixed shape (a row id, a `list_id` naming which term list, a length-prefixed
-  string) with **no field anywhere linking a term back to the `refs` records that use it**. That
-  makes `terms`/`jterms` a denormalized autocomplete cache, not a structure `refs` rows are
-  validated against — writing straight to `refs` just leaves that cache stale (old values listed,
-  new ones missing) until the user reopens EndNote's Tools/References → Define Term Lists →
-  Update List, which is a UI-only gap, not a corruption risk. See the module docstring in
-  `writeback.py` for the full byte-level evidence, including empirical confirmation that a stale
-  `misc.DbSortedRecList` sort cache does not break a real library either. `title` got its own
-  pass for the same reason `year` didn't: a byte-level read of the real `refs.MYI` (19 x 1024-byte
-  pages) located both key roots directly — page 1 (`id`) and page 13 (`yearIndex`, confirmed by
-  finding the literal text `"2017"` inside it) — and every page in the file is accounted for
-  between the two trees, with none left over for a `title` index to hide in.
-- `year` cannot be written at all: it is one of the library's only two MyISAM keys, and changing
-  an indexed value means removing and reinserting a B-tree key, not just editing bytes in place.
-  A 2026-08 spike against the real `refs.MYI` (read-only) found the key roots and page layout but
-  stopped short of the page-internal format and the insert/delete/rebalance algorithm — treat
-  `year`, like record deletion, as a separate future project, not part of this tool.
-- Both tools default to `dry_run=True`: the first call always returns a diff and writes nothing.
-  A second, explicit `dry_run=False` call is required to commit.
-- A commit only ever touches fields that actually change, and always backs up the entire library
-  (`.enl` plus the whole `rdb` directory) to a fresh timestamped folder first — see `backup_path`
-  in the result.
-- Every write re-reads the rewritten file block by block and verifies the target columns hold
-  exactly the intended value and every other record is byte-identical to before, raising before
-  anything is copied over the library on any mismatch.
-- The `.enl` mirror is rebuilt and checked *before* `refs.MYD`/`refs.MYI` are touched, so a repack
-  that was going to fail costs nothing instead of leaving the `rdb` tables updated and the mirror
-  stale. Every member of the archive is carried across and only `refs.MYD` is substituted: the
-  libraries inspected so far hold just `refs.MYD` and `refs.frm`, but silently dropping an
-  unanticipated member would be unrecoverable.
-- **Close EndNote before a real commit.** Both tools write `refs.MYD`/`refs.MYI`/`.enl` directly,
-  outside EndNote's own process; writing while EndNote has the library open risks a sharing
-  conflict or, worse, EndNote's stale in-memory copy silently overwriting the change later. A
-  best-effort lock check (`writeback._ensure_unlocked`) refuses the write if the files look open
-  elsewhere, but it is not a guarantee — a process that opened with share-read/share-write access
-  would not be caught. Close EndNote regardless of what the check says.
+**Close EndNote before a real write or cleanup commit.** File-lock probes are best-effort.
+A separate cross-process toolkit lock serializes policy checks, backups and publication, but
+cannot control EndNote's own writes. Every rewritten row and the free-space ledger are checked;
+the mirror is staged before publication. Ordinary publication failures roll back all three
+files. A process interruption preserves before-images in `<Library>.enl.writeback-recovery`
+and blocks further writes and source indexing until explicit recovery:
 
-The rest of `writeback.py`'s low-level API (arbitrary-column `set_column`/`set_fields`) remains
-unexposed to MCP clients; only the two narrow, field-scoped wrappers in `commit.py` are tools. See
-[SECURITY.md](SECURITY.md) before extending writeback further, and test any change against a
-disposable copy of a real library before trusting it against a live one.
+```bash
+endnotex9-toolkit recover-writeback --library "/path/to/Library.enl"
+endnotex9-toolkit index
+```
+
+Recovery refuses to overwrite files changed outside that transaction. Keep EndNote closed and
+preserve the journal and backups if recovery fails. This protects against process interruption;
+it is not a guarantee against storage failure or every power-loss scenario.
+
+Backup pruning uses per-library ownership and creation time. Unrelated folders, incomplete
+backups and unidentifiable legacy backups are retained. Orphan PDFs are quarantined with their
+relative paths intact. See [SECURITY.md](SECURITY.md) and the
+[format evidence](docs/writeback-format-notes.md) for the low-level boundary.
 
 ## Requirements
 
@@ -238,15 +214,27 @@ instead of saving a configuration that cannot run.
 `setup` stores paths and the local SQLite index in the operating system's application-config
 directory. It does not copy the EndNote library into this repository.
 
-**On Windows, the library `setup` writes is a fallback, not a pin.** Every `load_config` call
-(every CLI command, every lit-cleaner script run, and the MCP server's own startup) checks the
-registry for whichever library EndNote for Windows currently has open (`Recent Libraries\File1`,
-confirmed by a file-lock check — a merely recently used but now-closed library never counts) and
-prefers it over the stored path whenever they differ. Point `setup` at a library once; afterward,
-whichever `.enl` you actually have open in EndNote takes over automatically, and the stored path
-is only used when nothing is currently open (EndNote isn't running, or you're on a non-Windows
-platform, or the library is only ever an XML export). `endnotex9-toolkit status` marks the line
-`(auto-detected: currently open in EndNote)` when this override is active.
+**Library selection is explicit and pinned.** `load_config` keeps the configured library,
+XML fallback, PDF root and index together. Opening a different library in EndNote does not
+retarget the toolkit. To select that library, run either:
+
+```bash
+endnotex9-toolkit setup --library "/path/to/Other.enl"
+endnotex9-toolkit setup --use-open-library  # Windows: explicitly select the open X9 library
+```
+
+Restart the MCP server after changing setup. A running session rejects changed configuration
+instead of mixing its cached connection with a new source. New setups use a stable per-library
+index under the application-config directory; existing configured index paths are retained.
+An index already bound to another source is refused, preserving reviewed classification state.
+For an older nonempty index without a source identity, run `endnotex9-toolkit index --adopt-source`.
+It binds the index only when every record's source hash matches; a stale or different corpus
+requires a new `--db-path`, leaving the old index and reviewed state intact.
+Cleaner reports and caches also live under the per-library data directory; each script prints
+its absolute `report_dir`, and accepts `--output-dir` for an explicit override.
+
+Plugin startup uses the committed `uv.lock` with `uv run --locked`. Package dependency ranges
+remain available for plain pip installations; CI tests the same locked snapshot as the plugin.
 
 ## Connect an MCP client
 

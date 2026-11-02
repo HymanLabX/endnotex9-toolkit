@@ -173,76 +173,33 @@ def test_config_dir_keeps_using_the_directory_setup_wrote_before_the_rename(
 # --------------------------------------------------------------------------
 
 
-def test_load_config_prefers_the_currently_open_library_over_the_saved_one(
-    tmp_path: Path, monkeypatch
-):
+def test_open_library_never_partially_overrides_the_pinned_context(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
-    stale = tmp_path / "Old Library.enl"
-    stale.write_bytes(b"")
-    open_now = tmp_path / "New Library.enl"
-    open_now.write_bytes(b"")
-    config.save_config(config.Config(library_path=str(stale)))
+    saved = config.Config(
+        library_path=str(tmp_path / "Old.enl"),
+        pdf_dir=str(tmp_path / "Old.Data/PDF"),
+        endnote_xml=str(tmp_path / "old.xml"),
+        db_path=str(tmp_path / "old.db"),
+    )
+    config.save_config(saved)
+    monkeypatch.setattr(config, "detect_open_library", lambda: str(tmp_path / "New.enl"))
+    assert config.load_config() == saved
 
-    monkeypatch.setattr(config, "detect_open_library", lambda: str(open_now))
 
-    loaded = config.load_config()
-    assert loaded.library_path == str(open_now)
-
-
-def test_load_config_leaves_pdf_dir_alone_when_no_sibling_data_folder_exists(
-    tmp_path: Path, monkeypatch
-):
+def test_xml_only_context_is_not_retargeted_at_an_open_library(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
-    open_now = tmp_path / "New Library.enl"
-    open_now.write_bytes(b"")
-    config.save_config(config.Config(library_path="", pdf_dir="/configured/pdfs"))
-
-    monkeypatch.setattr(config, "detect_open_library", lambda: str(open_now))
-
-    loaded = config.load_config()
-    assert loaded.library_path == str(open_now)
-    assert loaded.pdf_dir == "/configured/pdfs"  # no <Library>.Data/PDF beside open_now
+    saved = config.Config(
+        endnote_xml=str(tmp_path / "export.xml"), db_path=str(tmp_path / "index.db")
+    )
+    config.save_config(saved)
+    monkeypatch.setattr(config, "detect_open_library", lambda: str(tmp_path / "New.enl"))
+    assert config.load_config() == saved
 
 
-def test_load_config_derives_pdf_dir_from_the_detected_library(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
-    open_now = tmp_path / "New Library.enl"
-    open_now.write_bytes(b"")
-    pdf_dir = tmp_path / "New Library.Data" / "PDF"
-    pdf_dir.mkdir(parents=True)
-    config.save_config(config.Config(library_path="", pdf_dir=""))
-
-    monkeypatch.setattr(config, "detect_open_library", lambda: str(open_now))
-
-    loaded = config.load_config()
-    assert loaded.pdf_dir == str(pdf_dir)
-
-
-def test_load_config_is_a_noop_when_the_detected_library_matches_the_saved_one(
-    tmp_path: Path, monkeypatch
-):
-    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
-    library = tmp_path / "Library.enl"
-    library.write_bytes(b"")
-    config.save_config(config.Config(library_path=str(library), pdf_dir="/configured/pdfs"))
-
-    monkeypatch.setattr(config, "detect_open_library", lambda: str(library))
-
-    loaded = config.load_config()
-    assert loaded.library_path == str(library)
-    assert loaded.pdf_dir == "/configured/pdfs"  # untouched -- nothing changed
-
-
-def test_load_config_falls_back_to_the_saved_library_when_nothing_is_detected(
-    tmp_path: Path, monkeypatch
-):
-    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
-    config.save_config(config.Config(library_path="C:/Research.enl"))
-
-    monkeypatch.setattr(config, "detect_open_library", lambda: "")
-
-    loaded = config.load_config()
-    assert loaded.library_path == "C:/Research.enl"
+def test_each_library_gets_a_stable_separate_runtime_directory(tmp_path):
+    first = config.library_data_dir(tmp_path / "A.enl", tmp_path)
+    assert first == config.library_data_dir(tmp_path / "sub/../A.enl", tmp_path)
+    assert first != config.library_data_dir(tmp_path / "B.enl", tmp_path)
 
 
 def test_detect_open_library_is_a_noop_off_windows(monkeypatch):

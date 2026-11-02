@@ -28,6 +28,8 @@ import trim  # noqa: E402
 import verify_import  # noqa: E402
 import watch  # noqa: E402
 
+from endnotex9_toolkit.pdf_identity import MissingDoiError  # noqa: E402
+
 RULES = SCRIPTS / "examples" / "rules_ti_sma.py"
 
 
@@ -73,6 +75,39 @@ def test_folder_numbers_are_stable_ten_digit_and_vary_by_attempt():
     assert first == cc.folder_number("10.1016/j.actamat.2020.01.001")
     assert len(first) == 10 and first.isdigit()
     assert cc.folder_number("10.1016/j.actamat.2020.01.001", 1) != first
+
+
+def test_chinese_and_unknown_titles_are_not_silently_dropped():
+    recs = [_rec(TI="退火对材料性能的影响"), _rec(TI="时效对材料性能的影响"), _rec(), _rec()]
+    assert len(merge.dedupe(recs)) == 4
+    assert cc.norm_title("退火对材料性能的影响")
+
+
+@pytest.mark.parametrize(
+    "message", ["not a PDF", "could not be parsed", "title similarity is too low"]
+)
+def test_jstage_url_never_bypasses_pdf_validation(message):
+    def reject(*args):
+        raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError, match=message):
+        oa.identify(
+            reject,
+            b"%PDF-invalid",
+            "10.2320/matertrans.47.1605",
+            "A title",
+            "https://www.jstage.jst.go.jp/article/matertrans/47/6/47_6_1605/_pdf",
+        )
+
+
+def test_author_version_still_requires_parsing_and_near_exact_title():
+    def validate(data, doi, title):
+        if doi:
+            raise MissingDoiError("DOI was not found")
+        return {"title_similarity": 0.95, "pages": 4, "sha256": "synthetic"}
+
+    info, suffix = oa.identify(validate, b"synthetic", "10.1/a", "A title", "https://example.org/a")
+    assert suffix == "-author-version" and info["doi_match"] is False
 
 
 # --- merge and trim -----------------------------------------------------------------------------

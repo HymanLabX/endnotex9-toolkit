@@ -12,6 +12,23 @@ from endnotex9_toolkit import cli, db
 from endnotex9_toolkit.config import Config
 
 
+def test_setup_can_explicitly_select_the_open_library_and_isolate_its_index(tmp_path, monkeypatch):
+    library = tmp_path / "Open.enl"
+    library.write_bytes(b"synthetic")
+    captured = {}
+    monkeypatch.setattr(cli, "detect_open_library", lambda: str(library))
+    monkeypatch.setattr(cli, "config_dir", lambda: tmp_path / "config")
+    monkeypatch.setattr(
+        cli,
+        "save_config",
+        lambda cfg: (captured.setdefault("config", cfg), tmp_path / "config.yaml")[1],
+    )
+    cli.cmd_setup(cli.build_parser().parse_args(["setup", "--use-open-library", "--skip-index"]))
+    assert captured["config"].library_path == str(library)
+    assert "libraries" in captured["config"].db_path
+    assert captured["config"].pdf_dir == "" and captured["config"].endnote_xml == ""
+
+
 def test_setup_accepts_library_without_xml(tmp_path: Path, monkeypatch):
     library = tmp_path / "Research.enl"
     library.write_bytes(b"marker")

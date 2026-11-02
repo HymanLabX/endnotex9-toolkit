@@ -105,7 +105,7 @@ def file_fingerprint(path: Path) -> str:
     """Size plus mtime — enough to notice a replaced attachment, and far
     cheaper than hashing a 20 MB PDF on every index run."""
     stat = path.stat()
-    return f"{stat.st_size}:{int(stat.st_mtime)}"
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
 
 
 def _clean(text: str) -> str:
@@ -124,7 +124,9 @@ def extract_pages(path: str | Path) -> list[str]:
 def _attachments(conn: sqlite3.Connection, rec_numbers: list[int] | None) -> list[tuple[int, str]]:
     sql = "SELECT rec_number, pdf_files FROM refs WHERE COALESCE(pdf_files, '[]') != '[]'"
     params: list = []
-    if rec_numbers:
+    if rec_numbers is not None:
+        if not rec_numbers:
+            return []
         placeholders = ", ".join("?" for _ in rec_numbers)
         sql += f" AND rec_number IN ({placeholders})"
         params = list(rec_numbers)
@@ -168,13 +170,19 @@ def index_pdfs(
 
         path = resolve_pdf_path(pdf_dir, rel_path)
         if path is None:
+            dbmod.delete_pdf_text(conn, rec_number, rel_path)
             stats["missing_file"] += 1
             continue
 
         fingerprint = file_fingerprint(path)
         if not force:
             existing = dbmod.get_pdf_doc(conn, rec_number, rel_path)
-            if existing and existing["file_hash"] == fingerprint and existing["status"] == "ok":
+            if (
+                existing
+                and existing["file_hash"] == fingerprint
+                and existing["status"] == "ok"
+                and existing["abs_path"] == str(path)
+            ):
                 stats["skipped_unchanged"] += 1
                 continue
 

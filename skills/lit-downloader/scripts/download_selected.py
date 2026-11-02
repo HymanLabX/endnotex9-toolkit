@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
-import hashlib
 import json
 import os
 import re
@@ -18,7 +17,6 @@ import subprocess
 import sys
 import threading
 import time
-from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -50,9 +48,14 @@ from job_store import JobStore  # noqa: E402
 from retrieval import download_pdf, resolve_oa_candidates  # noqa: E402
 
 from endnotex9_toolkit import config as configmod  # noqa: E402
-from endnotex9_toolkit import groups, parser, refstable  # noqa: E402
-
-MAX_CAPTURE_BYTES = 200 * 1024 * 1024
+from endnotex9_toolkit import groups, refstable  # noqa: E402
+from endnotex9_toolkit.normalize import doi_key, title_words  # noqa: E402
+from endnotex9_toolkit.pdf_identity import (  # noqa: E402, F401
+    MAX_CAPTURE_BYTES,
+    title_similarity,
+    title_similarity_in_text,
+    validate_pdf,
+)
 
 PUBLISHER_SELECTORS = (
     (
@@ -104,39 +107,11 @@ def text(value: object) -> str:
 
 
 def normalize_doi(value: object) -> str:
-    value = parser.normalize_doi(text(value)).casefold()
-    value = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi\s*:\s*)", "", value)
-    return value.rstrip(". ")
+    return doi_key(text(value))
 
 
 def normalize_title(value: object) -> str:
-    return " ".join(re.findall(r"[\w]+", text(value).casefold(), flags=re.UNICODE))
-
-
-def title_similarity(left: object, right: object) -> float:
-    return SequenceMatcher(None, normalize_title(left), normalize_title(right)).ratio()
-
-
-def title_similarity_in_text(title: object, body: object) -> float:
-    """Compare against similarly sized windows, not an entire first page."""
-    needle = normalize_title(title)
-    haystack = normalize_title(body)
-    if not needle or not haystack:
-        return 0.0
-    if needle in haystack:
-        return 1.0
-    title_words = needle.split()
-    body_words = haystack.split()
-    width = len(title_words)
-    if not width:
-        return 0.0
-    candidates = []
-    for window_width in {max(1, width - 2), width, width + 2}:
-        for start in range(0, max(1, min(len(body_words) - window_width + 1, 300))):
-            candidates.append(" ".join(body_words[start : start + window_width]))
-    return max(
-        (SequenceMatcher(None, needle, candidate).ratio() for candidate in candidates), default=0
-    )
+    return title_words(text(value))
 
 
 def record_doi(row: dict) -> str:
@@ -145,6 +120,13 @@ def record_doi(row: dict) -> str:
 
 def load_rows() -> tuple[object, Path, list[dict]]:
     cfg = configmod.load_config()
+    open_library = configmod.detect_open_library()
+    if open_library and os.path.normcase(str(Path(open_library).resolve())) != os.path.normcase(
+        str(Path(cfg.library_path).resolve())
+    ):
+        raise RuntimeError(
+            "The open EndNote library differs from setup. Select it explicitly with setup first."
+        )
     if not cfg.library_path:
         raise RuntimeError("No EndNote library is configured or currently open.")
     rdb_dir = groups.rdb_dir(cfg.library_path)
@@ -504,47 +486,6 @@ class BrowserRetriever:
         if self.playwright is not None:
             self.playwright.stop()
             self.playwright = None
-
-
-def validate_pdf(data: bytes, doi: str, title: str) -> dict:
-    if not data.startswith(b"%PDF-"):
-        raise RuntimeError("Downloaded response is not a PDF (missing %PDF- signature).")
-    if len(data) > MAX_CAPTURE_BYTES:
-        raise RuntimeError("Downloaded PDF exceeds the 200 MB validation limit.")
-    try:
-        import fitz
-    except ImportError as exc:
-        raise RuntimeError("Install the lit-downloader extra (PyMuPDF is missing).") from exc
-
-    document = None
-    try:
-        document = fitz.open(stream=data, filetype="pdf")
-        if document.page_count < 1:
-            raise RuntimeError("Downloaded PDF contains no pages.")
-        extracted = "\n".join(page.get_text() for page in document)
-        metadata_title = document.metadata.get("title", "")
-        pages = document.page_count
-    except Exception as exc:
-        raise RuntimeError(f"Downloaded PDF could not be parsed: {exc}") from exc
-    finally:
-        if document is not None:
-            document.close()
-
-    doi_match = normalize_doi(doi) in extracted.casefold()
-    similarity = max(
-        title_similarity(title, metadata_title),
-        title_similarity_in_text(title, extracted[:20_000]),
-    )
-    if doi and not doi_match:
-        raise RuntimeError("PDF identity check failed: the selected record DOI was not found.")
-    if similarity < 0.70:
-        raise RuntimeError("PDF identity check failed: title similarity is too low.")
-    return {
-        "pages": pages,
-        "doi_match": doi_match,
-        "title_similarity": round(similarity, 4),
-        "sha256": hashlib.sha256(data).hexdigest(),
-    }
 
 
 def _filename_from_url(url: str, rec_number: int) -> str:

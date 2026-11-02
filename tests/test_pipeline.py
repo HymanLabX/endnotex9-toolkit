@@ -6,11 +6,56 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_toolkit import db, indexer, parser
+from endnotex9_toolkit import db, indexer, parser, pdf, sources
 
 
 def test_index_counts(conn):
     assert db.count_references(conn) == 4
+
+
+def test_removing_an_attachment_removes_its_pages_and_fulltext(conn, xml_path):
+    rel = db.get_reference(conn, 1)["pdf_files"][0]
+    db.store_pdf_text(conn, 1, rel, "synthetic.pdf", ["stale attachment text"], "old", "ok")
+    conn.commit()
+    xml_path.write_text(
+        xml_path.read_text(encoding="utf-8").replace(
+            f"<pdf-urls><url>internal-pdf://{rel}</url></pdf-urls>", "<pdf-urls/>"
+        ),
+        encoding="utf-8",
+    )
+    indexer.build_index(xml_path, conn)
+    assert pdf.read_pages(conn, 1)["pages"] == []
+    assert conn.execute("SELECT count(*) FROM pdf_fts").fetchone()[0] == 0
+
+
+def test_reusing_an_index_for_another_library_preserves_existing_records(conn, tmp_path):
+    before = db.get_reference(conn, 1)
+    with pytest.raises(sources.SourceUnavailable, match="another library"):
+        indexer.build_index(None, conn, full=True, library_path=tmp_path / "Other.enl")
+    assert db.get_reference(conn, 1) == before
+
+
+def test_legacy_index_can_be_adopted_only_when_the_whole_corpus_matches(conn, xml_path):
+    conn.execute("DELETE FROM meta WHERE key = 'source_identity'")
+    conn.commit()
+    with pytest.raises(sources.SourceUnavailable, match="adopt-source"):
+        sources.validate_index_source(conn, xml_path)
+    assert sources.adopt_legacy_index(conn, xml_path)
+    assert db.count_references(conn) == 4
+    assert sources.validate_index_source(conn, xml_path)
+
+
+def test_failed_legacy_adoption_preserves_state(conn, xml_path):
+    conn.execute("DELETE FROM meta WHERE key = 'source_identity'")
+    conn.commit()
+    xml_path.write_text(
+        xml_path.read_text(encoding="utf-8").replace("2022", "2023"), encoding="utf-8"
+    )
+    before = db.get_reference(conn, 1)
+    with pytest.raises(sources.SourceUnavailable, match="differs from the source"):
+        sources.adopt_legacy_index(conn, xml_path)
+    assert db.get_meta(conn, "source_identity") is None
+    assert db.get_reference(conn, 1) == before
 
 
 def test_fields_are_parsed_from_styled_xml(conn):

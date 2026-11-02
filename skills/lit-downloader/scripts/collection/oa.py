@@ -41,6 +41,8 @@ from collection_common import (
     write_json_atomic,
 )
 
+from endnotex9_toolkit.pdf_identity import MissingDoiError
+
 sys.path.insert(0, str(HELPER_DIR))
 from retrieval import fetch_public
 
@@ -168,14 +170,8 @@ def fetch_pdf(fetch, url: str) -> tuple[str, bytes]:
 def identify(validate_pdf, data: bytes, doi: str, title: str, final: str) -> tuple[dict, str]:
     try:
         return validate_pdf(data, doi, title), ""
-    except RuntimeError as exc:
-        # Old J-STAGE PDFs print no DOI; their URL is built from the DOI's volume/page.
-        tail = re.sub(r"^[^.]+\.", "", doi.split("/", 1)[1]).replace(".", "_").lower()
-        tokens = set(re.split(r"[/_.\-]", final.lower()))
-        if "jstage.jst.go.jp" in final and tail and all(t in tokens for t in tail.split("_") if t):
-            return {"identity": "J-STAGE URL matches DOI", "title_similarity": None}, ""
-        if "DOI was not found" not in str(exc):
-            raise
+    except MissingDoiError:
+        pass
     info = validate_pdf(data, "", title)
     if info["title_similarity"] < 0.92:
         raise RuntimeError(f"no DOI in PDF and title similarity only {info['title_similarity']}")

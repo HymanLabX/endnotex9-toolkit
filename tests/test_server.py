@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from endnotex9_toolkit import myisam, server, writeback
+from endnotex9_toolkit import db, myisam, server, writeback
 from endnotex9_toolkit.config import Config
 
 EXPECTED_TOOLS = {
@@ -455,10 +455,12 @@ def test_classification_workflow_round_trip_is_read_only(wired):
 
 def _wire_real_library(wired, tmp_path: Path, rows: list[bytes]) -> Path:
     rdb, enl = _make_rdb_library(tmp_path, "Research2", rows)
+    # The write fixture is a different library: give it its own index too.
+    wired._conn = db.connect(tmp_path / "Research2.db")
     wired._config = Config(
         endnote_xml="",
         library_path=str(enl),
-        db_path=wired._config.db_path,
+        db_path=str(tmp_path / "Research2.db"),
     )
     return rdb
 
@@ -542,6 +544,7 @@ def test_mark_references_dry_run_then_commit(wired, tmp_path):
             {"rec_numbers": [1], "marker": "DELETE_CANDIDATE"},
         )
     )
+    assert len(preview.pop("source_fingerprint")) == 64
     assert preview == {"dry_run": True, "would_mark": 1, "already_marked": 0, "conflicts": {}}
     assert not (rdb.parent / "backups").exists()
 
@@ -613,3 +616,53 @@ def test_repeating_an_identical_entry_is_not_a_conflict(wired, tmp_path):
         )
     )
     assert preview["would_write"] == 1
+
+
+def test_changed_config_blocks_existing_connection(wired, tmp_path, monkeypatch):
+    config_file = tmp_path / "session-config.yaml"
+    config_file.write_text("changed", encoding="utf-8")
+    monkeypatch.setattr(wired, "config_path", lambda: config_file)
+    monkeypatch.setattr(wired, "_config_stamp", (0, 0))
+    with pytest.raises(Exception, match="Restart the MCP server"):
+        wired._get_conn()
+
+
+def test_successful_commit_still_reports_backup_when_index_refresh_fails(
+    wired, tmp_path, monkeypatch
+):
+    _wire_real_library(wired, tmp_path, [_row(1, title="A paper")])
+
+    def fail(_config):
+        raise RuntimeError("synthetic index failure")
+
+    monkeypatch.setattr(wired, "_reindex_after_write", fail)
+    result = _payload(
+        _call(
+            "update_reference_fields",
+            {
+                "updates": [{"rec_number": 1, "notes": "committed"}],
+                "dry_run": False,
+            },
+        )
+    )
+    assert result["records_written"] == 1 and Path(result["backup_path"]).is_dir()
+    assert "synthetic index failure" in result["index_refresh"]["error"]
+
+
+def test_write_tool_forwards_the_preview_fingerprint(wired, tmp_path):
+    _wire_real_library(wired, tmp_path, [_row(1, title="A paper")])
+    preview = _payload(
+        _call("update_reference_fields", {"updates": [{"rec_number": 1, "notes": "reviewed"}]})
+    )
+    _call(
+        "update_reference_fields", {"updates": [{"rec_number": 1, "volume": "9"}], "dry_run": False}
+    )
+    with pytest.raises(Exception, match="changed since the preview"):
+        _call(
+            "update_reference_fields",
+            {
+                "updates": [{"rec_number": 1, "notes": "reviewed"}],
+                "dry_run": False,
+                "expected_fingerprint": preview["source_fingerprint"],
+            },
+        )

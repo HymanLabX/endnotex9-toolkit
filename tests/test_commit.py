@@ -8,12 +8,14 @@ after writing.
 from __future__ import annotations
 
 import struct
+import threading
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from endnotex9_toolkit import commit, myisam, writeback
+from endnotex9_toolkit import commit, libraryio, myisam, writeback
 
 
 def _row(rec_number: int, **fields) -> bytes:
@@ -254,6 +256,7 @@ def test_mark_dry_run_reports_counts_and_writes_nothing(library):
 
     result = commit.mark_records(rdb, enl, [1, 2], "DELETE_CANDIDATE", dry_run=True)
 
+    assert len(result.pop("source_fingerprint")) == 64
     assert result == {"dry_run": True, "would_mark": 2, "already_marked": 0, "conflicts": {}}
     assert (rdb / "refs.MYD").read_bytes() == before
 
@@ -299,3 +302,106 @@ def test_mark_is_idempotent_for_already_marked_records(library):
         "backup_path": None,
         "column": "custom_7",
     }
+
+
+def test_concurrent_commits_preserve_both_changes(library):
+    rdb, enl = library
+    start = threading.Barrier(2)
+
+    def update(rec):
+        start.wait(timeout=5)
+        return commit.update_reference_fields(
+            rdb, enl, {rec: {"notes": f"note-{rec}"}}, dry_run=False
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(update, [1, 2]))
+    assert all(result["records_written"] == 1 for result in results)
+    rows = _read(rdb)
+    assert rows[1]["notes"] == b"note-1"
+    assert rows[2]["notes"] == b"note-2"
+
+
+def test_failed_publication_rolls_back_all_three_files(library, monkeypatch):
+    rdb, enl = library
+    paths = [rdb / "refs.MYD", rdb / "refs.MYI", enl]
+    originals = [p.read_bytes() for p in paths]
+    replace = libraryio.os.replace
+    failed = False
+
+    def fail_once(source, target):
+        nonlocal failed
+        if Path(target) == enl and not failed:
+            failed = True
+            raise OSError("synthetic publication failure")
+        return replace(source, target)
+
+    monkeypatch.setattr(libraryio.os, "replace", fail_once)
+    with pytest.raises(OSError, match="synthetic"):
+        commit.update_reference_fields(rdb, enl, {1: {"notes": "changed"}}, dry_run=False)
+    assert [p.read_bytes() for p in paths] == originals
+    assert not libraryio.recovery_dir(enl).exists()
+
+
+def test_interruption_is_recoverable_and_blocks_further_writes(library, monkeypatch, capsys):
+    rdb, enl = library
+    paths = [rdb / "refs.MYD", rdb / "refs.MYI", enl]
+    originals = [p.read_bytes() for p in paths]
+    replace = libraryio.os.replace
+
+    def interrupt(source, target):
+        if Path(target) == rdb / "refs.MYI":
+            raise KeyboardInterrupt("synthetic process interruption")
+        return replace(source, target)
+
+    with monkeypatch.context() as m:
+        m.setattr(libraryio.os, "replace", interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            commit.update_reference_fields(rdb, enl, {1: {"notes": "changed"}}, dry_run=False)
+    assert libraryio.recovery_dir(enl).is_dir()
+    with pytest.raises(libraryio.LibraryIOError, match="recovery"):
+        commit.mark_records(rdb, enl, [1], "marker", dry_run=False)
+    import argparse
+    import json
+
+    from endnotex9_toolkit import cli
+
+    cli.cmd_recover_writeback(argparse.Namespace(library=str(enl)))
+    assert json.loads(capsys.readouterr().out)["recovered"] is True
+    assert [p.read_bytes() for p in paths] == originals
+
+
+def test_commit_rejects_a_stale_preview(library):
+    rdb, enl = library
+    preview = commit.update_reference_fields(rdb, enl, {1: {"notes": "reviewed"}})
+    commit.update_reference_fields(rdb, enl, {2: {"notes": "another change"}}, dry_run=False)
+    with pytest.raises(commit.CommitError, match="changed since the preview"):
+        commit.update_reference_fields(
+            rdb,
+            enl,
+            {1: {"notes": "reviewed"}},
+            dry_run=False,
+            expected_fingerprint=preview["source_fingerprint"],
+        )
+    assert _read(rdb)[1].get("notes", b"") == b""
+
+
+def test_recovery_preserves_edits_outside_the_interrupted_transaction(library, monkeypatch):
+    rdb, enl = library
+    replace = libraryio.os.replace
+
+    def interrupt(source, target):
+        if Path(target) == rdb / "refs.MYI":
+            raise KeyboardInterrupt("synthetic interruption")
+        return replace(source, target)
+
+    with monkeypatch.context() as m:
+        m.setattr(libraryio.os, "replace", interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            commit.update_reference_fields(rdb, enl, {1: {"notes": "changed"}}, dry_run=False)
+    external_edit = b"synthetic external edit"
+    enl.write_bytes(external_edit)
+    with libraryio.library_lock(enl), pytest.raises(libraryio.LibraryIOError, match="edited after"):
+        libraryio.recover_publication(rdb, enl)
+    assert enl.read_bytes() == external_edit
+    assert libraryio.recovery_dir(enl).is_dir()

@@ -8,6 +8,7 @@ import pytest
 
 from endnotex9_toolkit import pdf as pdfmod
 from endnotex9_toolkit import search
+from endnotex9_toolkit.pdf_identity import MissingDoiError, validate_pdf
 
 fitz = pytest.importorskip("fitz", reason="PDF text extraction needs the [pdf] extra")
 
@@ -109,6 +110,18 @@ def test_index_is_incremental(conn, pdf_dir):
     assert forced["extracted"] == 1
 
 
+def test_pdf_identity_requires_a_parseable_document_matching_the_title(pdf_dir):
+    data = (pdf_dir / "0740201097/2022-Li-ACS.pdf").read_bytes()
+    title = "Elastocaloric cooling in Ni-Mn-Ga single crystals"
+    assert validate_pdf(data, "", title)["pages"] == 3
+    with pytest.raises(MissingDoiError):
+        validate_pdf(data, "10.1234/absent", title)
+    with pytest.raises(RuntimeError, match="title similarity"):
+        validate_pdf(data, "", "Quantum computing error correction on silicon processors")
+    with pytest.raises(RuntimeError, match="could not be parsed"):
+        validate_pdf(b"%PDF-invalid", "", title)
+
+
 def test_index_counts_a_missing_file_without_failing(conn, pdf_dir, tmp_path):
     stats = pdfmod.index_pdfs(conn, tmp_path / "nowhere")
     assert stats["missing_file"] == 1
@@ -177,3 +190,18 @@ def test_deleting_a_reference_drops_its_pdf_text(conn, pdf_dir):
     db.delete_reference(conn, 1)
     assert db.get_pdf_pages(conn, 1) == []
     assert search.search_fulltext(conn, ["adiabatic"]) == []
+
+
+def test_missing_file_removes_previously_indexed_text(conn, pdf_dir):
+    pdfmod.index_pdfs(conn, pdf_dir)
+    assert pdfmod.read_pages(conn, 1)["pages"]
+    target = pdf_dir / "0740201097/2022-Li-ACS.pdf"
+    target.unlink()
+    assert pdfmod.index_pdfs(conn, pdf_dir)["missing_file"] == 1
+    assert pdfmod.read_pages(conn, 1)["pages"] == []
+    assert search.search_fulltext(conn, ["adiabatic temperature change"]) == []
+
+
+def test_empty_pdf_selection_does_not_extract_the_whole_library(conn, pdf_dir):
+    stats = pdfmod.index_pdfs(conn, pdf_dir, rec_numbers=[])
+    assert stats["extracted"] == 0 and stats["attachments_seen"] == 0

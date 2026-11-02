@@ -1,18 +1,8 @@
-"""lit-cleaner files: orphaned PDF attachments + this tool's own old backups.
+"""Preview orphan PDFs and owned metadata backups; commit the saved candidate list.
 
-Pure filesystem operations -- never touches refs.MYD/MYI/.enl, so none of
-writeback.py's guardrails apply here and none are needed: nothing here is a
-MyISAM write. Still list-then-confirm, same as everything else in
-lit-cleaner: orphaned PDFs are moved to a quarantine folder (reversible), not
-deleted outright; old backups are only ever candidates beyond both a
-recency count and an age threshold, and are actually deleted only once
-listed and confirmed (backups are themselves insurance, so removing one is
-not undone by another backup step).
-
-Usage:
-    python files.py                          # report only
-    python files.py --commit                 # quarantine orphans, delete excess backups
-    python files.py --keep-backups 5 --backup-age-days 14
+Close EndNote before applying a report. The library lock and source fingerprint
+protect metadata-dependent decisions. Orphans are quarantined; only completed,
+library-owned backups beyond both retention thresholds are permanently removed.
 """
 
 from __future__ import annotations
@@ -20,14 +10,11 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import time
 from pathlib import Path
 
 import common  # side effect: puts the endnotex9_toolkit package on sys.path
 
-from endnotex9_toolkit import refstable
-
-OUT_DIR = Path(__file__).resolve().parent / "out"
+from endnotex9_toolkit import backups, libraryio, pdf, refstable, writeback
 
 # Where a --commit run quarantines orphans (see main()).
 QUARANTINE_DIRNAME = "_lit_cleaner_orphans"
@@ -52,35 +39,31 @@ def find_orphaned_pdfs(rows, pdf_dir):
     referenced = set()
     for row in rows.values():
         for rel in refstable._pdf_files(row):
-            referenced.add(Path(rel).as_posix())
+            resolved = pdf.resolve_pdf_path(pdf_dir, rel)
+            if resolved is not None:
+                referenced.add(resolved)
 
     on_disk = []
     if pdf_dir.is_dir():
         for path in pdf_dir.rglob("*"):
             parents = path.relative_to(pdf_dir).parts[:-1]
-            if path.is_file() and not any(d in parents for d in QUARANTINE_DIRNAMES):
+            if (
+                path.is_file()
+                and path.suffix.casefold() == ".pdf"
+                and path.resolve().is_relative_to(pdf_dir.resolve())
+                and not any(d in parents for d in QUARANTINE_DIRNAMES)
+            ):
                 on_disk.append(path)
 
     orphans = []
     for path in on_disk:
-        rel = path.relative_to(pdf_dir).as_posix()
-        if rel not in referenced:
+        if path.resolve() not in referenced:
             orphans.append(path)
     return orphans, len(on_disk), len(referenced)
 
 
 def find_excess_backups(library_path, keep_recent, age_days):
-    backups_dir = Path(library_path).resolve().parent / "backups"
-    if not backups_dir.is_dir():
-        return [], []
-    entries = sorted(
-        (p for p in backups_dir.iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True
-    )
-    cutoff = time.time() - age_days * 86400
-    recent, excess = entries[:keep_recent], entries[keep_recent:]
-    prunable = [p for p in excess if p.stat().st_mtime < cutoff]
-    kept = recent + [p for p in excess if p not in prunable]
-    return prunable, kept
+    return backups.excess_backups(library_path, keep_recent, age_days)
 
 
 def dir_size(path):
@@ -121,11 +104,22 @@ def quarantine_orphans(orphans, pdf_dir, quarantine):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", action="store_true")
+    ap.add_argument("--output-dir", help="override the per-library report directory")
     ap.add_argument("--keep-backups", type=int, default=5)
     ap.add_argument("--backup-age-days", type=int, default=14)
     args = ap.parse_args()
 
     rdb, library_path, pdf_dir = common.load_library()
+    out_dir = common.report_dir(library_path, args.output_dir)
+    report_path = out_dir / "files_report.json"
+    if args.commit:
+        if not report_path.is_file():
+            raise SystemExit("Generate and review a files report before --commit")
+        apply_report(
+            json.loads(report_path.read_text(encoding="utf-8")), rdb, library_path, pdf_dir
+        )
+        return
+    fingerprint = libraryio.source_fingerprint(rdb, library_path)
     rows = common.read_all_rows(rdb)
 
     report = {}
@@ -147,32 +141,46 @@ def main():
     )
     report["prunable_backups"] = [str(p) for p in prunable]
     report["prunable_backups_total_bytes"] = sum(dir_size(p) for p in prunable)
+    if libraryio.source_fingerprint(rdb, library_path) != fingerprint:
+        raise RuntimeError("The library changed while scanning; generate a fresh files report")
+    report["source_fingerprint"] = fingerprint
+    report["retention"] = {"keep_recent": args.keep_backups, "age_days": args.backup_age_days}
 
-    OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "files_report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if not orphans and not prunable:
         print("\nnothing to clean up.")
         return
 
-    if not args.commit:
-        print(
-            "\n(report only -- rerun with --commit to quarantine orphans and delete excess backups)"
+    print("\n(report only -- close EndNote, then --commit to apply this saved report)")
+
+
+def apply_report(report, rdb, library_path, pdf_dir):
+    with libraryio.library_lock(library_path):
+        libraryio.require_consistent(library_path)
+        writeback._ensure_unlocked(
+            [Path(library_path), Path(rdb) / "refs.MYD", Path(rdb) / "refs.MYI"]
         )
-        return
-
-    if orphans:
-        quarantine = Path(pdf_dir) / QUARANTINE_DIRNAME
-        moved, skipped = quarantine_orphans(orphans, pdf_dir, quarantine)
-        print(f"\nmoved {moved} orphaned PDF(s) to {quarantine}")
-        for path in skipped:
-            print(f"  left in place (a file already sits at its quarantine path): {path}")
-
-    for p in prunable:
-        shutil.rmtree(p)
-    if prunable:
+        if libraryio.source_fingerprint(rdb, library_path) != report["source_fingerprint"]:
+            raise RuntimeError(
+                "The library changed since the files report; generate a fresh report"
+            )
+        rows = common.read_all_rows(rdb)
+        current_orphans = set(find_orphaned_pdfs(rows, pdf_dir)[0]) if pdf_dir else set()
+        orphans = [Path(p) for p in report.get("orphans", [])]
+        current_backups, _ = backups.excess_backups(library_path, **report["retention"])
+        prunable = [Path(p) for p in report["prunable_backups"]]
+        if not set(orphans).issubset(current_orphans) or not set(prunable).issubset(
+            current_backups
+        ):
+            raise RuntimeError("Cleanup candidates changed since review; generate a fresh report")
+        if orphans:
+            quarantine = Path(pdf_dir) / QUARANTINE_DIRNAME
+            moved, skipped = quarantine_orphans(orphans, pdf_dir, quarantine)
+            print(f"moved {moved} orphaned PDF(s) to {quarantine}; left in place: {len(skipped)}")
+        for path in prunable:
+            shutil.rmtree(path)
         print(f"deleted {len(prunable)} old backup folder(s)")
 
 

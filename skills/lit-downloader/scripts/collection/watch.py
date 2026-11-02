@@ -40,6 +40,8 @@ from collection_common import (
     write_json_atomic,
 )
 
+from endnotex9_toolkit.pdf_identity import MissingDoiError
+
 DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+", re.I)
 PUBLISHER_HOSTS = re.compile(
     r"doi\.org|sciencedirect|springer|wiley|mdpi|iop|tandfonline|sagepub|"
@@ -130,7 +132,7 @@ def pick(m: Matcher, data: bytes, cands, found_in_text, name_doi, validate_pdf):
                 data, "" if (d == name_doi and d not in found_in_text) else d, m.titles[d]
             )
         except RuntimeError as exc:
-            if "DOI was not found" in str(exc) and d in m.has_repo:
+            if isinstance(exc, MissingDoiError) and d in m.has_repo:
                 try:
                     info = validate_pdf(data, "", m.titles[d])
                 except RuntimeError as exc2:

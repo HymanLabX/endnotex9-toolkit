@@ -143,3 +143,5 @@ def test_mcp_server_command_is_plugin_root_relative():
     # the author's machine and nowhere else.
     assert "${CLAUDE_PLUGIN_ROOT}" in server["args"]
     assert server["command"] == "uv"
+    assert "--locked" in server["args"]
+    assert (ROOT / "uv.lock").is_file()

@@ -4,9 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-# Written by `uv run`, which is how the plugin launches the server. Left
-# uncommitted so a library release does not pin its dependents' resolution.
-/uv.lock
+# uv.lock is committed: plugin launches and CI use the same dependency snapshot.
 
 # Build, test, lint, and coverage output
 build/
@@ -28,6 +26,10 @@ coverage.xml
 *.sqlite-shm
 *.sqlite-wal
 *.tmp
+*.writeback-tmp
+*.enl.toolkit.lock
+*.enl.writeback-recovery/
+backups/
 
 # Private EndNote libraries, exports, and attachments
 *.enl
@@ -49,6 +51,8 @@ coverage.xml
 # `/.mcp.json` is deliberately NOT ignored: it is the plugin's server manifest
 # (see .claude-plugin/plugin.json) and has to ship with the repository.
 /.codex/
+/.claude/
+/skills/**/scripts/out/
 /CLAUDE.md
 
 # Editors and operating systems

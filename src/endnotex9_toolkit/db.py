@@ -138,6 +138,8 @@ CREATE TABLE IF NOT EXISTS refs (
 
 CREATE INDEX IF NOT EXISTS idx_refs_year ON refs(year);
 CREATE INDEX IF NOT EXISTS idx_refs_type ON refs(ref_type);
+CREATE INDEX IF NOT EXISTS idx_refs_doi ON refs(doi COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_refs_normalized_title ON refs(endnote_title_key(title));
 
 CREATE VIRTUAL TABLE IF NOT EXISTS refs_fts USING fts5(
     title, authors, abstract, keywords,
@@ -258,6 +260,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), timeout=15.0, check_same_thread=False, factory=_Connection)
     conn.endnotex9_lock = _lock_for_path(db_path)
     conn.row_factory = sqlite3.Row
+    conn.create_function("endnote_title_key", 1, _selector_title, deterministic=True)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 10000")
 
@@ -309,6 +312,13 @@ def content_hashes(conn: sqlite3.Connection) -> dict[int, str]:
 
 def upsert_reference(conn: sqlite3.Connection, ref: dict) -> None:
     rec_number = ref["rec_number"]
+    current_attachments = set(ref.get("pdf_files") or [])
+    indexed = conn.execute(
+        "SELECT rel_path FROM pdf_docs WHERE rec_number = ?", (rec_number,)
+    ).fetchall()
+    for row in indexed:
+        if row["rel_path"] not in current_attachments:
+            delete_pdf_text(conn, rec_number, row["rel_path"])
 
     values = []
     for column in REF_COLUMNS:
@@ -356,6 +366,10 @@ def get_reference(conn: sqlite3.Connection, rec_number: int) -> dict | None:
     return row_to_ref(row) if row is not None else None
 
 
+def _selector_title(title: str | None) -> str:
+    return unicodedata.normalize("NFC", title or "").strip().casefold()
+
+
 def find_references_by_title(conn: sqlite3.Connection, title: str, limit: int = 20) -> list[dict]:
     """Find references by exact title first, then by title substring.
 
@@ -363,19 +377,23 @@ def find_references_by_title(conn: sqlite3.Connection, title: str, limit: int = 
     or bibliography is easy to use. Exact matches are preferred even when a
     shorter title would also occur inside another title.
     """
-    needle = unicodedata.normalize("NFC", title or "").strip().casefold()
+    needle = _selector_title(title)
     if not needle:
         return []
-    rows = conn.execute(
-        "SELECT * FROM refs WHERE title IS NOT NULL AND trim(title) <> ''"
+    limit = max(1, min(int(limit), MAX_LIMIT))
+    exact = conn.execute(
+        "SELECT * FROM refs WHERE endnote_title_key(title) = ? ORDER BY rec_number LIMIT ?",
+        (needle, limit),
     ).fetchall()
-
-    def normalized(row: sqlite3.Row) -> str:
-        return unicodedata.normalize("NFC", row["title"]).strip().casefold()
-
-    exact = [row for row in rows if normalized(row) == needle]
-    candidates = exact or [row for row in rows if needle in normalized(row)]
-    return [row_to_ref(row) for row in candidates[: max(1, limit)]]
+    candidates = (
+        exact
+        or conn.execute(
+            "SELECT * FROM refs WHERE instr(endnote_title_key(title), ?) > 0 "
+            "ORDER BY rec_number LIMIT ?",
+            (needle, limit),
+        ).fetchall()
+    )
+    return [row_to_ref(row) for row in candidates]
 
 
 def find_references_by_doi(conn: sqlite3.Connection, doi: str) -> list[dict]:

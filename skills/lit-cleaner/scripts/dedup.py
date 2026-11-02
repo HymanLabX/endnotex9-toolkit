@@ -29,14 +29,10 @@ from __future__ import annotations
 import argparse
 import json
 from collections import defaultdict
-from pathlib import Path
 
 import common  # side effect: puts the endnotex9_toolkit package on sys.path
 
-from endnotex9_toolkit import commit
-
-OUT_DIR = Path(__file__).resolve().parent / "out"
-
+from endnotex9_toolkit import commit, libraryio
 
 norm_title = common.norm_title
 
@@ -106,6 +102,7 @@ def build_merge(rows, keep_rec, delete_rec):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", action="store_true")
+    ap.add_argument("--output-dir", help="override the per-library report directory")
     # Records tagged before the lit-cleaner rename carry LIT_CLEAN_DUPLICATE,
     # which this string does not contain as a substring -- a Smart Group built
     # on the old marker matches nothing tagged from here on, and the user is
@@ -117,6 +114,50 @@ def main():
     args = ap.parse_args()
 
     rdb, library_path, _pdf_dir = common.load_library()
+    out_dir = common.report_dir(library_path, args.output_dir)
+    if args.commit:
+        path = out_dir / "dedup_plan.json"
+        if not path.is_file():
+            raise SystemExit("Generate and review a dedup report before --commit")
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        if not plan["delete_recs"]:
+            print("nothing to commit")
+            return
+        if (args.marker, args.column) != (plan["marker"], plan["column"]):
+            raise SystemExit("Marker/column differ from the saved preview; generate a new report")
+        merges = {int(k): v for k, v in plan["merge_updates"].items()}
+        with libraryio.library_lock(library_path):
+            checked = commit.mark_records(
+                rdb,
+                library_path,
+                plan["delete_recs"],
+                plan["marker"],
+                column=plan["column"],
+                expected_fingerprint=plan["source_fingerprint"],
+            )
+            if merges:
+                result = commit.update_reference_fields(
+                    rdb,
+                    library_path,
+                    merges,
+                    dry_run=False,
+                    expected_fingerprint=checked["source_fingerprint"],
+                )
+                print("merge committed: " + json.dumps(result, ensure_ascii=False))
+            result = commit.mark_records(
+                rdb,
+                library_path,
+                plan["delete_recs"],
+                plan["marker"],
+                column=plan["column"],
+                dry_run=False,
+                expected_fingerprint=libraryio.source_fingerprint(rdb, library_path),
+            )
+        print("mark committed: " + json.dumps(result, ensure_ascii=False))
+        print(
+            f"In EndNote: build a Smart Group '{args.column} contains {args.marker}', review, then delete."
+        )
+        return
     rows = common.read_all_rows(rdb)
 
     confirmed, likely = detect_groups(rows)
@@ -153,19 +194,30 @@ def main():
             merge_updates[decision["keep"]] = fields
     print(f"\nkeep-side records that gain merged fields: {len(merge_updates)}")
 
-    OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "dedup_resolved.json").write_text(
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "dedup_resolved.json").write_text(
         json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    (OUT_DIR / "dedup_needs_review.json").write_text(
+    (out_dir / "dedup_needs_review.json").write_text(
         json.dumps(needs_review, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    (OUT_DIR / "dedup_merge_updates.json").write_text(
+    (out_dir / "dedup_merge_updates.json").write_text(
         json.dumps({str(k): v for k, v in merge_updates.items()}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
     if not resolved:
+        (out_dir / "dedup_plan.json").write_text(
+            json.dumps(
+                {
+                    "delete_recs": [],
+                    "merge_updates": {},
+                    "marker": args.marker,
+                    "column": args.column,
+                }
+            ),
+            encoding="utf-8",
+        )
         print("\nnothing to merge or tag.")
         return
 
@@ -182,6 +234,20 @@ def main():
     mark_preview = commit.mark_records(
         rdb, library_path, delete_recs, args.marker, column=args.column, dry_run=True
     )
+    (out_dir / "dedup_plan.json").write_text(
+        json.dumps(
+            {
+                "merge_updates": merge_updates,
+                "delete_recs": delete_recs,
+                "marker": args.marker,
+                "column": args.column,
+                "source_fingerprint": mark_preview["source_fingerprint"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print(
         f"mark dry_run: would_mark={mark_preview['would_mark']} already_marked={mark_preview['already_marked']}"
     )
@@ -190,27 +256,8 @@ def main():
             f"  conflicts (column already holds different text): {len(mark_preview['conflicts'])}"
         )
 
-    if not args.commit:
-        print("\n(dry run only -- rerun with --commit to actually write)")
-        print(f"once committed, build an EndNote Smart Group: {args.column} contains {args.marker}")
-        return
-
-    if merge_updates:
-        result = commit.update_reference_fields(rdb, library_path, merge_updates, dry_run=False)
-        print(
-            f"\nmerge committed: records_written={result['records_written']} backup_path={result['backup_path']}"
-        )
-
-    result = commit.mark_records(
-        rdb, library_path, delete_recs, args.marker, column=args.column, dry_run=False
-    )
-    print(
-        f"mark committed: records_written={result['records_written']} backup_path={result['backup_path']}"
-    )
-    print(
-        f"\nnow in EndNote: build a Smart Group '{args.column} contains {args.marker}', "
-        "review it, then delete the matches yourself."
-    )
+    print("\n(dry run only -- rerun with --commit to apply this saved preview)")
+    print(f"once committed, build an EndNote Smart Group: {args.column} contains {args.marker}")
 
 
 if __name__ == "__main__":

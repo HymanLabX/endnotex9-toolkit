@@ -65,9 +65,10 @@ def dedupe(recs: list) -> list:
     out, seen = [], set()
     for rec in recs:
         key = rec_doi(rec) or first(rec, "AN").lower() or norm_title(rec_title(rec))
-        if key in seen:
+        if key and key in seen:
             continue
-        seen.add(key)
+        if key:
+            seen.add(key)
         out.append(rec)
     return out
 

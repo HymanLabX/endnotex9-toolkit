@@ -32,6 +32,9 @@ def build_index(
     back to the XML export — see sources.py for why that order.
     """
     source, records, note = sources.open_references(conn, xml_path, library_path)
+    identity = sources.source_identity(xml_path, library_path)
+    if identity:
+        dbmod.set_meta(conn, "source_identity", identity)
 
     if full:
         conn.executescript(

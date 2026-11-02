@@ -34,7 +34,7 @@ from . import commit as commitmod
 from . import pdf as pdfmod
 from . import profile as profilemod
 from . import search as searchmod
-from .config import Config, load_config
+from .config import Config, config_path, load_config
 from .watcher import watch_and_reindex
 
 mcp = _ServerClass("EndNote X9 Library")
@@ -63,6 +63,7 @@ def _tool(fn):
 
 _conn: sqlite3.Connection | None = None
 _config: Config | None = None
+_config_stamp: tuple[int, int] | None = None
 # The SDK dispatches synchronous tool handlers onto a worker thread pool, so
 # two first calls can race here. Without this, both open a connection and one
 # is dropped without ever being closed.
@@ -70,21 +71,37 @@ _INIT_LOCK = threading.Lock()
 
 
 def _get_config() -> Config:
-    global _config
+    global _config, _config_stamp
+    try:
+        stat = config_path().stat()
+        stamp = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        stamp = None
+    if _config is not None and _config_stamp is not None and stamp != _config_stamp:
+        raise RuntimeError(
+            "Configuration changed. Restart the MCP server to switch library context."
+        )
     if _config is None:
         with _INIT_LOCK:
             if _config is None:
                 _config = load_config()
+                _config_stamp = stamp
     return _config
 
 
 def _get_conn() -> sqlite3.Connection:
     global _conn
+    config = _get_config()
     if _conn is None:
-        config = _get_config()
         with _INIT_LOCK:
             if _conn is None:
-                _conn = db.connect(config.db_path)
+                conn = db.connect(config.db_path)
+                try:
+                    sources.validate_index_source(conn, config.endnote_xml, config.library_path)
+                except Exception:
+                    conn.close()
+                    raise
+                _conn = conn
     return _conn
 
 
@@ -583,20 +600,39 @@ def get_bibtex(
 
 def _get_rdb():
     config = _get_config()
+    sources.validate_index_source(_get_conn(), config.endnote_xml, config.library_path)
     rdb = sources.library_rdb(config.library_path)
     if rdb is None or not config.library_path:
         raise ValueError("A readable .enl library is required to write to EndNote.")
     return config, rdb
 
 
-def _reindex_after_write(config: Config) -> None:
+def _reindex_after_write(config: Config) -> dict:
     conn = _get_conn()
     with db.connection_lock(conn):
-        indexer.build_index(config.endnote_xml, conn, full=False, library_path=config.library_path)
+        return indexer.build_index(
+            config.endnote_xml, conn, full=False, library_path=config.library_path
+        )
+
+
+def _refresh_committed_result(result: dict, config: Config) -> dict:
+    if result.get("records_written"):
+        try:
+            result["index_refresh"] = _reindex_after_write(config)
+        except Exception as exc:
+            # The source commit succeeded. Keep its backup/result visible even if the
+            # derived index cannot be refreshed; retrying the write would be misleading.
+            result["index_refresh"] = {
+                "error": str(exc),
+                "action": "Run rebuild_index to refresh the index",
+            }
+    return result
 
 
 @_tool
-def update_reference_fields(updates: list[dict], dry_run: bool = True) -> dict:
+def update_reference_fields(
+    updates: list[dict], dry_run: bool = True, expected_fingerprint: str | None = None
+) -> dict:
     """Fill in or correct text fields, the author list, or the keyword list.
 
     Each item of `updates` needs `rec_number` plus one or more fields.
@@ -618,6 +654,9 @@ def update_reference_fields(updates: list[dict], dry_run: bool = True) -> dict:
     change. Always prefer a source the user trusts (e.g. a DOI lookup, or
     text already present elsewhere on the same record) for the new values;
     never invent bibliographic data.
+
+    Pass the preview's `source_fingerprint` as `expected_fingerprint` on commit
+    to refuse a library that changed after review.
 
     **EndNote must be closed before a `dry_run=False` call.** This writes
     the library's files directly; if EndNote still has them open, the write
@@ -654,10 +693,10 @@ def update_reference_fields(updates: list[dict], dry_run: bool = True) -> dict:
                     "give each field one value"
                 )
             target[field] = value
-    result = commitmod.update_reference_fields(rdb, config.library_path, parsed, dry_run=dry_run)
-    if not dry_run and result["records_written"]:
-        _reindex_after_write(config)
-    return result
+    result = commitmod.update_reference_fields(
+        rdb, config.library_path, parsed, dry_run=dry_run, expected_fingerprint=expected_fingerprint
+    )
+    return _refresh_committed_result(result, config) if not dry_run else result
 
 
 @_tool
@@ -667,6 +706,7 @@ def mark_references(
     column: str = "custom_7",
     force: bool = False,
     dry_run: bool = True,
+    expected_fingerprint: str | None = None,
 ) -> dict:
     """Tag references with a marker so the user can bulk-act on them in EndNote.
 
@@ -686,6 +726,8 @@ def mark_references(
     overwrite existing text in that column. Backs up the whole library
     first — see `backup_path` in the result.
 
+    On commit, pass the preview's `source_fingerprint` as `expected_fingerprint`.
+
     **EndNote must be closed before a `dry_run=False` call** — same reason
     as `update_reference_fields`: confirm with the user that EndNote is
     closed before making this call, rather than relying solely on the
@@ -693,11 +735,16 @@ def mark_references(
     """
     config, rdb = _get_rdb()
     result = commitmod.mark_records(
-        rdb, config.library_path, rec_numbers, marker, column=column, force=force, dry_run=dry_run
+        rdb,
+        config.library_path,
+        rec_numbers,
+        marker,
+        column=column,
+        force=force,
+        dry_run=dry_run,
+        expected_fingerprint=expected_fingerprint,
     )
-    if not dry_run and result["records_written"]:
-        _reindex_after_write(config)
-    return result
+    return _refresh_committed_result(result, config) if not dry_run else result
 
 
 # --------------------------------------------------------------------------

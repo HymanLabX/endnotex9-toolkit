@@ -55,8 +55,10 @@ Extraction is incremental and opt-in, so a record can be in the library with no 
 index_pdfs(references=[{"rec_number": 42}])
 ```
 
-Read the reply. If nothing was extracted, the record has no attached PDF (or PyMuPDF is not
-installed — the `pdf` extra). Say which, and offer `lit-downloader` for the first case. Do not
+Read the reply. Both `extracted > 0` and `skipped_unchanged > 0` mean full text is available;
+the latter is a successful incremental skip, so continue with `read_pdf_pages`. Check
+`missing_file`, `failed`, and `attachments_seen` to distinguish missing or unreadable PDFs;
+a missing backend raises an installation error. Say which, and offer `lit-downloader` for missing PDFs. Do not
 fall back to writing a summary from the abstract while implying you read the paper; if the user
 wants an abstract-level answer, tell them that is what they are getting and label the output
 `abstract only`.

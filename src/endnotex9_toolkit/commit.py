@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import writeback
+from . import libraryio, writeback
 from .refstable import VALUE_SEPARATOR, read_rows
 
 # Public field name -> internal EndNote column, for plain-string fields.
@@ -93,11 +93,13 @@ def _current_rows(rdb_dir: str | Path, rec_numbers, columns) -> dict[int, dict]:
     }
 
 
+@libraryio.library_operation
 def update_reference_fields(
     rdb_dir: str | Path,
     enl_path: str | Path,
     updates: dict[int, dict[str, object]],
     dry_run: bool = True,
+    expected_fingerprint: str | None = None,
 ) -> dict:
     """Fill in or correct text fields and/or the author and keyword lists.
 
@@ -110,6 +112,11 @@ def update_reference_fields(
     """
     if not updates:
         raise CommitError("updates must contain at least one record")
+    fingerprint = libraryio.source_fingerprint(rdb_dir, enl_path)
+    if expected_fingerprint is not None and fingerprint != expected_fingerprint:
+        raise CommitError(
+            "The library changed since the preview; generate and review a fresh preview"
+        )
 
     all_fields = {f for fields in updates.values() for f in fields}
     bad_fields = sorted(all_fields - set(TEXT_FIELDS) - set(LIST_FIELDS))
@@ -127,6 +134,8 @@ def update_reference_fields(
     rec_numbers = set(updates)
     columns = {all_columns[f] for fields in updates.values() for f in fields}
     before = _current_rows(rdb_dir, rec_numbers, columns)
+    if libraryio.source_fingerprint(rdb_dir, enl_path) != fingerprint:
+        raise CommitError("The library changed while reading; generate a fresh preview")
 
     diffs = []
     for rec_number, fields in updates.items():
@@ -155,6 +164,7 @@ def update_reference_fields(
             "would_write": len(changed),
             "unchanged": len(diffs) - len(changed),
             "diffs": diffs,
+            "source_fingerprint": fingerprint,
         }
     if not changed:
         return {"dry_run": False, "records_written": 0, "backup_path": None, "diffs": diffs}
@@ -178,6 +188,7 @@ def update_reference_fields(
     }
 
 
+@libraryio.library_operation
 def mark_records(
     rdb_dir: str | Path,
     enl_path: str | Path,
@@ -186,6 +197,7 @@ def mark_records(
     column: str = "custom_7",
     force: bool = False,
     dry_run: bool = True,
+    expected_fingerprint: str | None = None,
 ) -> dict:
     """Write `marker` into `column` for each of `rec_numbers`.
 
@@ -205,11 +217,18 @@ def mark_records(
         raise CommitError("marker must be non-empty text")
     if not rec_numbers:
         raise CommitError("rec_numbers must contain at least one record")
+    fingerprint = libraryio.source_fingerprint(rdb_dir, enl_path)
+    if expected_fingerprint is not None and fingerprint != expected_fingerprint:
+        raise CommitError(
+            "The library changed since the preview; generate and review a fresh preview"
+        )
 
     unique = sorted(set(rec_numbers))
     before = {
         rec: _decode(row[column]) for rec, row in _current_rows(rdb_dir, unique, {column}).items()
     }
+    if libraryio.source_fingerprint(rdb_dir, enl_path) != fingerprint:
+        raise CommitError("The library changed while reading; generate a fresh preview")
     conflicts = {rec: before[rec] for rec in unique if before[rec] and before[rec] != marker}
     if conflicts and not force:
         raise CommitError(
@@ -225,6 +244,7 @@ def mark_records(
             "would_mark": len(to_write),
             "already_marked": len(unique) - len(to_write),
             "conflicts": conflicts,
+            "source_fingerprint": fingerprint,
         }
     if not to_write:
         return {"dry_run": False, "records_written": 0, "backup_path": None, "column": column}

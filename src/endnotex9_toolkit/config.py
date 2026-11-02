@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from . import parser
+from .backups import library_identity
 
 APP_NAME = "endnotex9-toolkit"
 # The name before 0.2.0. Its directory already holds the configuration and the index of everyone
@@ -27,8 +28,7 @@ class Config:
     endnote_xml: str = ""
     pdf_dir: str = ""
     db_path: str = ""
-    # Path to the `.enl` file itself. Only groups need it — they live in the
-    # library's own tables, not in the XML export.
+    # Pinned source for metadata, groups and writes. Switching is explicit via setup.
     library_path: str = ""
     # Cap on how much extracted PDF text one read_pdf_pages call returns.
     max_pdf_chars: int = 20000
@@ -48,6 +48,14 @@ def config_dir() -> Path:
 
 def config_path() -> Path:
     return config_dir() / "config.yaml"
+
+
+def library_data_dir(library_path: str | Path, base: Path | None = None) -> Path:
+    """Stable, separate runtime directory for each library or XML-only source."""
+    import hashlib
+
+    identity = hashlib.sha256(library_identity(library_path).encode()).hexdigest()[:20]
+    return (base or config_dir()) / "libraries" / identity
 
 
 # The repository root when this package runs from a source tree: a clone, or the plugin
@@ -130,37 +138,11 @@ def _is_held_by_another_process(path: str) -> bool:
 
 
 def detect_open_library() -> str:
-    """The `.enl` library currently open in EndNote X9, if any.
+    """The open X9 library, offered only by explicit `setup --use-open-library`.
 
-    A static `library_path` written by `setup` goes stale the moment the
-    user opens a different library in EndNote itself — this project has no
-    way to hear about that otherwise, so `load_config` calls this on every
-    load and prefers whatever it finds here.
-
-    EndNote for Windows records recently opened libraries in the registry,
-    most-recent first, at ``HKCU\\<_ENDNOTE_RECENT_LIBRARIES_KEY>\\File1``.
-    That alone only proves "most recently opened" — closing EndNote leaves
-    the same entry sitting there, which would just trade one kind of
-    staleness for another. The signal actually trusted here is a file-lock
-    check in the same spirit as `writeback._ensure_unlocked`: EndNote holds
-    a library's `.enl` in a share mode that makes a write open fail with a
-    sharing violation for as long as the library is open. Only a `File1`
-    path that is both on disk and currently locked this way is returned; a
-    merely-recent but now-closed library returns "", so a stale MRU entry
-    can never override a working static config on a machine where EndNote
-    is not (or no longer) running.
-
-    A sharing violation specifically — see `_is_held_by_another_process`.
-    Any failure to open is *not* good enough: a read-only `.enl`, on a
-    read-only share or with the read-only attribute set, fails the same way
-    while nothing has it open, and taking that as "EndNote is running here"
-    would retarget `library_path` at a library the user never opened.
-
-    Windows only, and silent about it: other platforms, a missing registry
-    key, or any read failure all just return "" so callers fall back to the
-    configured `library_path` unconditionally. EndNote's other clients do
-    not share this registry layout, and this project's write-side
-    guardrails were only ever verified against EndNote for Windows anyway.
+    EndNote's Windows MRU File1 entry is trusted only when CreateFileW reports
+    a sharing violation. A closed, read-only, inaccessible or merely recent
+    library does not count. Configured library contexts are never overridden.
     """
     if sys.platform != "win32":
         return ""
@@ -181,12 +163,6 @@ def detect_open_library() -> str:
     except OSError:
         return ""
     return candidate if held else ""
-
-
-def _pdf_dir_for_library(library_path: str) -> str:
-    """The sibling `<Library>.Data/PDF` folder, EndNote's own convention."""
-    candidate = Path(library_path).with_suffix(".Data") / "PDF"
-    return str(candidate) if candidate.is_dir() else ""
 
 
 def default_library_path(endnote_xml: str) -> str:
@@ -235,17 +211,11 @@ def load_config() -> Config:
     known = {f.name for f in fields(Config)}
     config = Config(**{k: v for k, v in data.items() if k in known})
     if not config.db_path:
-        config.db_path = str(config_dir() / "library.db")
+        source = config.library_path or config.endnote_xml
+        config.db_path = str((library_data_dir(source) if source else config_dir()) / "library.db")
 
-    # Live check, every load — see detect_open_library() for why this isn't
-    # just whatever `setup` last wrote to disk.
-    open_library = detect_open_library()
-    if open_library and os.path.normcase(open_library) != os.path.normcase(config.library_path):
-        config.library_path = open_library
-        pdf_dir = _pdf_dir_for_library(open_library)
-        if pdf_dir:
-            config.pdf_dir = pdf_dir
-
+    # The library, XML fallback, PDF root and database form one pinned context.
+    # MRU detection is available during explicit setup, never as a partial override.
     return config
 
 

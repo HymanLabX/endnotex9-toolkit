@@ -39,7 +39,8 @@ elif find_spec("endnotex9_toolkit") is None:
     )
 
 from endnotex9_toolkit import config as configmod  # noqa: E402
-from endnotex9_toolkit import groups, parser, refstable  # noqa: E402
+from endnotex9_toolkit import groups, refstable  # noqa: E402
+from endnotex9_toolkit.normalize import doi_key, title_key  # noqa: E402
 from endnotex9_toolkit.refstable import VALUE_SEPARATOR  # noqa: E402
 
 
@@ -52,6 +53,17 @@ def load_library():
     if not (rdb / "refs.MYD").exists():
         raise SystemExit(f"No refs.MYD under {rdb} -- is library_path correct?")
     return rdb, cfg.library_path, cfg.pdf_dir
+
+
+def report_dir(library_path, override=None):
+    path = (
+        Path(override).expanduser().resolve()
+        if override
+        else (configmod.library_data_dir(library_path) / "lit-cleaner")
+    )
+    path.mkdir(parents=True, exist_ok=True)
+    print(f"report_dir: {path}")
+    return path
 
 
 def read_all_rows(rdb):
@@ -70,7 +82,7 @@ def values(row, col):
 
 
 def doi_of(row):
-    return parser.normalize_doi(text(row, "electronic_resource_number"))
+    return doi_key(text(row, "electronic_resource_number"))
 
 
 def article_number_of(raw_doi):
@@ -203,15 +215,7 @@ def norm_title(t):
     and "时效对形状记忆合金 A" into the same key, so two unrelated Chinese
     papers by one author in one year would look like duplicates.
     """
-    folded = re.sub(
-        r"[^a-z0-9]",
-        "",
-        unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii").lower(),
-    )
-    stripped = re.sub(r"[\s\W_]", "", unicodedata.normalize("NFKC", t).lower())
-    # Prefer the ASCII fold only when it kept essentially the whole title;
-    # otherwise most of the text was non-Latin and the fold threw it away.
-    return folded if len(folded) >= 0.8 * len(stripped) else stripped
+    return title_key(t)
 
 
 NOTES_CITATION_TAIL_RE = re.compile(r"doi:\s*\S+\.?\s*$", re.I)

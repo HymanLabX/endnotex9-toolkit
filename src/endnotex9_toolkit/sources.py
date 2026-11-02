@@ -26,7 +26,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from . import db as dbmod
-from . import groups, parser, refstable
+from . import groups, libraryio, parser, refstable
+from .backups import library_identity
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,73 @@ _REF_TYPE_META_KEY = "ref_type_names"
 
 class SourceUnavailable(RuntimeError):
     pass
+
+
+def source_identity(xml_path=None, library_path=None) -> str:
+    return library_identity(library_path or xml_path) if (library_path or xml_path) else ""
+
+
+def validate_index_source(conn, xml_path=None, library_path=None) -> str:
+    identity = source_identity(xml_path, library_path)
+    stored = dbmod.get_meta(conn, "source_identity")
+    legacy = dbmod.get_meta(conn, "library_path")
+    if (
+        not stored
+        and not legacy
+        and identity
+        and conn.execute("SELECT 1 FROM refs LIMIT 1").fetchone()
+    ):
+        raise SourceUnavailable(
+            "This legacy index has no source identity. Run index --adopt-source to verify it, "
+            "or select a new --db-path with setup; "
+            "the existing index and reviewed classifications have been preserved."
+        )
+    if (stored and stored != identity) or (
+        not stored and legacy and library_path and library_identity(legacy) != identity
+    ):
+        raise SourceUnavailable(
+            "This index belongs to another library. Use setup with a separate --db-path; "
+            "the existing index and reviewed classifications have been preserved."
+        )
+    return identity
+
+
+def adopt_legacy_index(conn, xml_path=None, library_path=None) -> bool:
+    """Bind an unowned legacy index only when every current source hash matches.
+
+    This preserves reviewed classification state and PDFs. A stale or different
+    corpus must use a new database instead of being silently adopted.
+    """
+    if dbmod.get_meta(conn, "source_identity") or dbmod.get_meta(conn, "library_path"):
+        validate_index_source(conn, xml_path, library_path)
+        return False
+    identity = source_identity(xml_path, library_path)
+    if not identity:
+        raise SourceUnavailable("A library or XML source is required to adopt an index")
+    if library_path:
+        libraryio.require_consistent(library_path)
+    with dbmod.connection_lock(conn):
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            rdb = library_rdb(library_path)
+            if rdb is not None:
+                records = refstable.read_references(rdb, stored_ref_type_names(conn))
+            elif xml_path and Path(xml_path).is_file():
+                records = parser.parse_library(xml_path)
+            else:
+                raise SourceUnavailable("The configured source is not readable")
+            actual = {ref["rec_number"]: ref["content_hash"] for ref in records}
+            if actual != dbmod.content_hashes(conn):
+                raise SourceUnavailable(
+                    "The legacy index differs from the source. Use a new --db-path; "
+                    "the existing index and reviewed classifications have been preserved."
+                )
+            dbmod.set_meta(conn, "source_identity", identity)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return True
 
 
 def library_rdb(library_path: str | Path | None) -> Path | None:
@@ -94,6 +162,9 @@ def open_references(
     Prefers the library. Falls back to the XML export if the library is
     absent or unreadable, and says why in the note.
     """
+    validate_index_source(conn, xml_path, library_path)
+    if library_path:
+        libraryio.require_consistent(library_path)
     rdb = library_rdb(library_path)
     if rdb is not None:
         mapping = stored_ref_type_names(conn)

@@ -78,6 +78,9 @@ def test_cjk_titles_that_differ_do_not_fold_to_the_same_key():
     assert common.norm_title("退火对形状记忆合金 A 的影响") != common.norm_title(
         "时效对形状记忆合金 A 的影响"
     )
+    assert common.norm_title("Elastocaloric performance of NiTi 合金甲") != common.norm_title(
+        "Elastocaloric performance of NiTi 合金乙"
+    )
 
 
 def test_latin_titles_still_fold_past_punctuation_and_case():
@@ -438,13 +441,16 @@ def test_backups_beyond_the_recency_count_and_age_are_prunable(tmp_path: Path):
     library.write_bytes(b"")
     backups = tmp_path / "backups"
     backups.mkdir()
-    for i in range(4):
-        (backups / f"Lib-2026010{i}T000000Z").mkdir()
+    for i in range(1, 5):
+        folder = backups / f"Lib-2026010{i}T000000Z"
+        (folder / "rdb").mkdir(parents=True)
+        for name in ("Lib.enl", "rdb/refs.MYD", "rdb/refs.MYI"):
+            (folder / name).write_bytes(b"backup")
 
     prunable, kept = files_script.find_excess_backups(library, keep_recent=2, age_days=0)
 
     assert len(kept) == 2 and len(prunable) == 2
-    assert [p.name for p in kept] == ["Lib-20260103T000000Z", "Lib-20260102T000000Z"]
+    assert [p.name for p in kept] == ["Lib-20260104T000000Z", "Lib-20260103T000000Z"]
 
 
 def test_recent_backups_are_kept_even_beyond_the_count(tmp_path: Path):
@@ -452,8 +458,11 @@ def test_recent_backups_are_kept_even_beyond_the_count(tmp_path: Path):
     library.write_bytes(b"")
     backups = tmp_path / "backups"
     backups.mkdir()
-    for i in range(4):
-        (backups / f"Lib-2026010{i}T000000Z").mkdir()
+    for i in range(1, 5):
+        folder = backups / f"Lib-2026010{i}T000000Z"
+        (folder / "rdb").mkdir(parents=True)
+        for name in ("Lib.enl", "rdb/refs.MYD", "rdb/refs.MYI"):
+            (folder / name).write_bytes(b"backup")
 
     prunable, kept = files_script.find_excess_backups(library, keep_recent=1, age_days=3650)
 
@@ -539,3 +548,19 @@ def test_a_made_up_contact_address_is_not_sent():
     """CrossRef's polite pool wants a real address; a fake one is worse
     than none, so the default sends no mailto at all."""
     assert "example.com" not in crossref.HEADERS["User-Agent"]
+
+
+def test_encoded_or_renamed_referenced_pdf_is_kept(tmp_path):
+    root = tmp_path / "PDF"
+    (root / "123").mkdir(parents=True)
+    (root / "123/paper.pdf").write_bytes(b"synthetic")
+    (root / "unrelated.txt").write_text("leave this alone")
+    rows = {1: _row(1, link_to_pdf="internal-pdf://123/paper%2Epdf")}
+    assert files_script.find_orphaned_pdfs(rows, root)[0] == []
+
+
+def test_reports_are_stored_per_library_outside_the_plugin(tmp_path, monkeypatch):
+    monkeypatch.setattr(common.configmod, "config_dir", lambda: tmp_path)
+    first = common.report_dir(tmp_path / "A.enl")
+    second = common.report_dir(tmp_path / "B.enl")
+    assert first != second and first.is_relative_to(tmp_path / "libraries")

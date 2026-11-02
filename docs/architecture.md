@@ -30,8 +30,10 @@ EndNote library / XML / PDFs
 | Retrieval | `search`, `browse`, `resolver`, `pdf` | Metadata search, filtered browsing, safe record-number/title/DOI resolution, PDF extraction, and page retrieval. |
 | Classification | `profile`, `sampling`, `classification`, `writeplan` | Profile the corpus, create reproducible samples, version taxonomy/rules, audit results, and prepare read-only writeback plans (still no commit path for `custom_1`). |
 | Writeback engine | `writeback` | Low-level X9 row rewriting: a column allowlist verified safe against MyISAM keys/term lists/sort caches, multi-column writes, self-verification, and library backups. Not exposed to MCP directly. |
+| Library I/O | `libraryio`, `backups` | Serialize toolkit writers across threads/processes, journal before-images, roll back failed publication, recover interrupted writes, and identify library-owned completed backups. |
 | Commit surface | `commit` | The only MCP-writable layer: two field-scoped, backup-first, dry-run-by-default wrappers over `writeback` — text/list fields (bibliographic fields, journal, notes, author, keywords) and Custom 2–7 markers. Never deletes a record. |
 | Output | `citation`, `bibtex` | Format citations, bibliographies, and BibTeX. |
+| Shared matching | `normalize`, `pdf_identity` | Unicode-preserving DOI/title matching and browser-independent validation of PDF bytes and identity. |
 | Interfaces | `config`, `cli`, `server` | Load local configuration, expose commands, and register MCP tools. |
 
 ## Data ownership
@@ -63,6 +65,23 @@ EndNote library / XML / PDFs
     than diverged.
 11. Retrieval limits are clamped (`db.MAX_LIMIT`): `limit` arrives from the calling model, and an
     unbounded or negative value would otherwise return the whole library in one reply.
+12. Library selection is pinned by setup. New indexes and runtime reports are separated by
+    canonical source path; an index bound to another source is never repurposed. Changing
+    configuration requires an MCP restart so the connection and watcher remain one context.
+13. Publication is serialized across toolkit processes and journals all three before-images.
+    Ordinary failures roll back; interrupted writes block further writes/indexing until explicit
+    recovery. Recovery refuses source files changed outside the transaction.
+14. Removing an attachment invalidates its document, pages and FTS entries during metadata refresh.
+    Missing files invalidate their extracted text on the next PDF indexing pass.
+
+Exact title selectors use an indexed deterministic NFC/casefold expression; DOI selectors use a
+case-insensitive index. These additive derived indexes preserve the host schema and reviewed state.
+Substring title searches remain bounded scans. Bibliographic deduplication uses the separate
+punctuation-insensitive Unicode key in `normalize`.
+
+The low-level format investigations are maintained in
+[writeback-format-notes.md](writeback-format-notes.md). Skills call deterministic helpers and read
+their output contracts; normal execution does not require loading helper implementations.
 
 ## Extending the server
 

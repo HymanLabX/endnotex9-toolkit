@@ -125,6 +125,23 @@ independently verified backups — for a change that will run against a real lib
 confirming the library still opens in EndNote with no "needs repair" prompt and still sorts and
 searches normally afterwards, not just that the package's own tests pass.
 
+## Concurrent writes and interrupted publication
+
+`libraryio` uses a canonical-library lock across toolkit threads and processes. The lock is
+cooperative: it does not replace closing EndNote. A persistent `.enl.toolkit.lock` file is normal;
+the operating system releases its lock when the process exits, so deleting the file is unnecessary.
+
+Verified before-images and per-file hashes are flushed to `.enl.writeback-recovery` before source
+replacement. Ordinary publication failures attempt rollback. Process interruptions require an
+explicit `recover-writeback --library <path>` with EndNote closed. Recovery verifies every live
+file against that transaction's before/after hashes and refuses unrelated edits. Keep the journal
+and independent metadata backups if recovery cannot finish. This is a process-interruption
+recovery protocol, not a guarantee against arbitrary power loss, disk damage or external writers.
+
+The two MCP commit tools accept `expected_fingerprint` from a reviewed preview. Cleaner scripts
+apply saved previews with that check; a changed source requires another review. Metadata backups
+cover `.enl` and `rdb`; PDF quarantine and backup pruning have separate filesystem effects.
+
 ## Untrusted imports and attachments
 
 Treat EndNote XML exports and attachment metadata obtained from other people as untrusted input.

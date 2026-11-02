@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from . import browse, db, sources
+from . import browse, db, libraryio, sources, writeback
 from . import pdf as pdfmod
 from .config import (
     Config,
@@ -17,6 +17,7 @@ from .config import (
     default_library_path,
     default_pdf_dir,
     detect_open_library,
+    library_data_dir,
     load_config,
     save_config,
     setup_command,
@@ -36,9 +37,9 @@ def _absolute(value: str | None) -> str:
 
 def _setup_is_non_interactive(args: argparse.Namespace) -> bool:
     explicit = ("library", "endnote_xml", "pdf_dir", "db_path")
-    return bool(getattr(args, "non_interactive", False)) or any(
-        getattr(args, name, None) is not None for name in explicit
-    )
+    return bool(
+        getattr(args, "non_interactive", False) or getattr(args, "use_open_library", False)
+    ) or any(getattr(args, name, None) is not None for name in explicit)
 
 
 def _validate_non_interactive_paths(library: str, xml_path: str, pdf_dir: str) -> None:
@@ -58,6 +59,12 @@ def cmd_setup(args: argparse.Namespace) -> None:
     non_interactive = _setup_is_non_interactive(args)
     if non_interactive:
         library = _absolute(getattr(args, "library", None))
+        if getattr(args, "use_open_library", False):
+            if library:
+                raise ValueError("Choose either --library or --use-open-library")
+            library = _absolute(detect_open_library())
+            if not library:
+                raise ValueError("No open EndNote X9 library detected; pass --library explicitly")
         xml_path = _absolute(getattr(args, "endnote_xml", None))
         requested_pdf = getattr(args, "pdf_dir", None)
         if requested_pdf is None:
@@ -107,11 +114,13 @@ def cmd_setup(args: argparse.Namespace) -> None:
                 "EndNote library (.enl), for reading its groups", default_library_path(xml_path)
             )
 
+    library, xml_path, pdf_dir = _absolute(library), _absolute(xml_path), _absolute(pdf_dir)
     config = Config(
         endnote_xml=xml_path,
         pdf_dir=pdf_dir,
         library_path=library,
-        db_path=_absolute(getattr(args, "db_path", None)) or str(config_dir() / "library.db"),
+        db_path=_absolute(getattr(args, "db_path", None))
+        or str(library_data_dir(library or xml_path, config_dir()) / "library.db"),
         max_pdf_chars=getattr(args, "max_pdf_chars", 20000),
         watch=not getattr(args, "no_watch", False),
     )
@@ -125,7 +134,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
         (xml_path and Path(xml_path).exists()) or (library and Path(library).exists())
     ):
         print("Indexing references...")
-        conn = db.connect(config.db_path)
+        conn = _connect_index(config)
         stats = build_index(xml_path, conn, full=True, library_path=library)
         print(
             f"  indexed {stats['total']} references from the "
@@ -165,6 +174,19 @@ def _doctor_check(name: str, status: str, detail: str, **data) -> dict:
     return {"name": name, "status": status, "detail": detail, **data}
 
 
+def _connect_index(config: Config, *, adopt_source: bool = False) -> sqlite3.Connection:
+    conn = db.connect(config.db_path)
+    try:
+        if adopt_source:
+            sources.adopt_legacy_index(conn, config.endnote_xml, config.library_path)
+        else:
+            sources.validate_index_source(conn, config.endnote_xml, config.library_path)
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
 def doctor_report() -> dict:
     """Inspect configuration and index readiness without changing either."""
     path = config_path()
@@ -199,6 +221,14 @@ def doctor_report() -> dict:
         )
     else:
         checks.append(_doctor_check("library", "pass", f"Direct X9 tables found at {direct_rdb}"))
+    if library is not None and libraryio.recovery_dir(library).exists():
+        checks.append(
+            _doctor_check(
+                "writeback_recovery",
+                "fail",
+                "Interrupted writeback: close EndNote and run recover-writeback",
+            )
+        )
 
     xml_path = Path(config.endnote_xml).expanduser() if config.endnote_xml else None
     xml_readable = False
@@ -237,6 +267,7 @@ def doctor_report() -> dict:
         try:
             uri = database.resolve().as_uri() + "?mode=ro"
             with sqlite3.connect(uri, uri=True) as conn:
+                sources.validate_index_source(conn, config.endnote_xml, config.library_path)
                 schema_row = conn.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()
@@ -257,7 +288,7 @@ def doctor_report() -> dict:
                     last_indexed_at=indexed_row[0] if indexed_row else None,
                 )
             )
-        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        except (OSError, sqlite3.Error, TypeError, ValueError, sources.SourceUnavailable) as exc:
             checks.append(_doctor_check("index", "fail", f"Index cannot be read: {exc}"))
 
     if not config.pdf_dir:
@@ -310,7 +341,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
 def cmd_index(args: argparse.Namespace) -> None:
     config = load_config()
-    conn = db.connect(config.db_path)
+    conn = _connect_index(config, adopt_source=getattr(args, "adopt_source", False))
     stats = build_index(config.endnote_xml, conn, full=args.full, library_path=config.library_path)
     for key, value in stats.items():
         print(f"{key:>10}: {value}")
@@ -327,7 +358,7 @@ def cmd_index_pdfs(args: argparse.Namespace) -> None:
     if not config.pdf_dir:
         print(f"Error: no pdf_dir set in {config_path()}.", file=sys.stderr)
         sys.exit(1)
-    conn = db.connect(config.db_path)
+    conn = _connect_index(config)
 
     def progress(done: int, total: int) -> None:
         print(f"\r  {done}/{total} attachments...", end="", flush=True)
@@ -361,7 +392,7 @@ def cmd_crosscheck(_args: argparse.Namespace) -> None:
     if not (config.library_path and config.endnote_xml):
         print("Error: both library_path and endnote_xml must be configured.", file=sys.stderr)
         sys.exit(1)
-    conn = db.connect(config.db_path)
+    conn = _connect_index(config)
     rdb = sources.library_rdb(config.library_path)
     if rdb is None:
         print(f"Error: no readable library at {config.library_path}", file=sys.stderr)
@@ -395,7 +426,7 @@ def cmd_crosscheck(_args: argparse.Namespace) -> None:
 
 def cmd_status(_args: argparse.Namespace) -> None:
     config = load_config()
-    conn = db.connect(config.db_path)
+    conn = _connect_index(config)
     stats = browse.library_stats(conn, top=5)
     open_library = detect_open_library()
     auto_detected = bool(open_library) and open_library == config.library_path
@@ -427,12 +458,26 @@ def cmd_serve(_args: argparse.Namespace) -> None:
     serve_main()
 
 
+def cmd_recover_writeback(args: argparse.Namespace) -> None:
+    enl = Path(args.library).expanduser().resolve()
+    if enl.suffix.casefold() != ".enl":
+        raise ValueError("--library must point to an EndNote .enl file")
+    rdb = enl.with_suffix(".Data") / "rdb"
+    with libraryio.library_lock(enl):
+        writeback._ensure_unlocked([enl, rdb / "refs.MYD", rdb / "refs.MYI"])
+        recovered = libraryio.recover_publication(rdb, enl)
+    print(json.dumps({"library": str(enl), "recovered": recovered}))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="endnotex9-toolkit")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_setup = sub.add_parser("setup", help="configure a library interactively or with flags")
     p_setup.add_argument("--library", help="path to an EndNote .enl library")
+    p_setup.add_argument(
+        "--use-open-library", action="store_true", help="explicitly select the open EndNote library"
+    )
     p_setup.add_argument("--xml", dest="endnote_xml", help="optional EndNote XML export")
     p_setup.add_argument("--pdf-dir", help="attachment directory, usually <Library>.Data/PDF")
     p_setup.add_argument("--db-path", help="custom local SQLite index path")
@@ -448,6 +493,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_index = sub.add_parser("index", help="(re)build the reference index")
     p_index.add_argument("--full", action="store_true", help="wipe and rebuild from scratch")
+    p_index.add_argument(
+        "--adopt-source",
+        action="store_true",
+        help="bind a legacy index only after exact source-hash verification",
+    )
     p_index.set_defaults(func=cmd_index)
 
     p_pdfs = sub.add_parser("index-pdfs", help="extract text from attached PDFs")
@@ -464,6 +514,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="diagnose configuration and index readiness")
     p_doctor.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     p_doctor.set_defaults(func=cmd_doctor)
+    p_recover = sub.add_parser(
+        "recover-writeback", help="restore an interrupted write; close EndNote first"
+    )
+    p_recover.add_argument("--library", required=True, help="exact .enl library to recover")
+    p_recover.set_defaults(func=cmd_recover_writeback)
     sub.add_parser(
         "serve", help="start the stdio MCP server (normally launched by your MCP client)"
     ).set_defaults(func=cmd_serve)
@@ -475,7 +530,15 @@ def main() -> None:
     args = build_parser().parse_args()
     try:
         args.func(args)
-    except (FileNotFoundError, SyntaxError, ValueError, pdfmod.PdfBackendMissing) as exc:
+    except (
+        FileNotFoundError,
+        SyntaxError,
+        ValueError,
+        pdfmod.PdfBackendMissing,
+        libraryio.LibraryIOError,
+        writeback.WritebackError,
+        sources.SourceUnavailable,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
